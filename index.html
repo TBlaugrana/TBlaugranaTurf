@@ -1,0 +1,1314 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TBlaugrana BOT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Barlow+Condensed:wght@400;600;700;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #f5f6f8;
+  --surface:  #ffffff;
+  --surface2: #f0f1f4;
+  --border:   #e2e5eb;
+  --border2:  #d0d4de;
+  --text:     #1a1d26;
+  --muted:    #8892a4;
+  --dim:      #b0b8c8;
+  --accent:   #00a86b;
+  --accent-bg:#e6f7f1;
+  --warn:     #e07800;
+  --warn-bg:  #fff3e0;
+  --danger:   #d9163a;
+  --danger-bg:#fdeef2;
+  --yellow:   #c49a00;
+  --yellow-bg:#fdf8e1;
+  --mono:     'DM Mono', monospace;
+  --cond:     'Barlow Condensed', sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 14px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── TITLE BANNER ───────────────────────────────────── */
+#titleBanner {
+  flex-shrink: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 15px;
+  text-align: center;
+  position: relative;
+}
+#titleBanner h1 {
+  font-family: var(--cond);
+  font-weight: 900;
+  font-size: 33px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* ── COUNTDOWN BANNER ───────────────────────────────── */
+#countdownBanner {
+  flex-shrink: 0;
+  height: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border-bottom: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  transition: height 0.3s ease;
+  position: relative;
+}
+#countdownBanner.visible { height: 82px; }
+#countdownBanner::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 10%; right: 10%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+}
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.15} }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+#cdIcon { font-size: 28px; opacity: 0.5; }
+#cdWrap { display: flex; flex-direction: column; align-items: center; }
+#cdMain {
+  font-family: var(--cond);
+  font-weight: 900;
+  font-size: 50px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.3s;
+}
+#cdMain.soon     { color: var(--warn); }
+#cdMain.imminent { color: var(--danger); animation: pulse 0.7s ease infinite; }
+#cdMain.gone     { color: var(--muted); font-size: 30px; letter-spacing: 4px; }
+#cdSub {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+#cdTime {
+  font-family: var(--cond);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+/* ── RACE NAVIGATOR ─────────────────────────────────── */
+.race-nav {
+  flex-shrink: 0;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.nav-btn {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: 6px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 17px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  user-select: none;
+}
+.nav-btn:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+.nav-btn:disabled { opacity: 0.28; cursor: default; }
+.nav-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.nav-course {
+  font-family: var(--cond);
+  font-weight: 900;
+  font-size: 30px;
+  letter-spacing: 1px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.nav-meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.nav-loading {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dim);
+  letter-spacing: 1px;
+  animation: pulse 1s ease infinite;
+}
+
+/* ── STATUS BAR ─────────────────────────────────────── */
+#statusBar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 1px;
+}
+#statusDot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--dim);
+  flex-shrink: 0;
+}
+#statusDot.live  { background: var(--accent); box-shadow: 0 0 6px #00a86b66; animation: blink 1.4s ease infinite; }
+#statusDot.error { background: var(--danger); }
+#statusDot.wait  { background: var(--yellow); }
+#statusText { white-space: nowrap; }
+#courseCounter {
+  flex: 1;
+  text-align: center;
+  color: var(--dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+#snapshotInfo { color: var(--dim); font-size: 10px; white-space: nowrap; }
+
+/* ── ALERT BANNER ────────────────────────────────────── */
+#alertBanner {
+  display: none;
+  flex-shrink: 0;
+  background: #c8000d;
+  color: #fff;
+  padding: 6px 14px;
+  font-family: var(--cond);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid #9a000a;
+}
+#alertBanner.show { display: block; }
+
+/* ── ERROR ──────────────────────────────────────────── */
+.error-box {
+  flex-shrink: 0;
+  margin: 7px 15px;
+  padding: 7px 11px;
+  background: var(--danger-bg);
+  border: 1px solid #f5c0cc;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--danger);
+  display: none;
+}
+.error-box.show { display: block; }
+
+/* ── TABLEAU PRINCIPAL 5 COLONNES ─────────────────── */
+#tableWrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.col-headers {
+  display: grid;
+  grid-template-columns: 1fr 70px 80px 68px;
+  padding: 0 10px;
+  background: var(--surface2);
+  border-bottom: 2px solid var(--border2);
+  height: 30px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.col-headers > div {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: right;
+  padding-right: 6px;
+}
+.col-headers > div:first-child { text-align: left; padding-right: 0; }
+
+#rows { flex: 1; overflow-y: auto; }
+#rows::-webkit-scrollbar { width: 4px; }
+#rows::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 70px 80px 68px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+  background: var(--surface);
+  height: 52px;
+  transition: background 0.1s;
+  position: relative;
+}
+.row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: transparent;
+  border-radius: 0 2px 2px 0;
+}
+.row:hover { background: var(--surface2); }
+
+.row.hi-alert { background: var(--danger-bg); }
+.row.hi-alert::before { background: var(--danger); }
+.row.hi-alert:hover   { background: #fce8ed; }
+.row.hi-high { background: var(--danger-bg); }
+.row.hi-high::before { background: var(--danger); }
+.row.hi-high:hover   { background: #fce8ed; }
+.row.hi-mid  { background: var(--warn-bg); }
+.row.hi-mid::before  { background: var(--warn); }
+.row.hi-mid:hover    { background: #fdefd4; }
+.row.hi-low  { background: var(--yellow-bg); }
+.row.hi-low::before  { background: var(--yellow); }
+.row.hi-low:hover    { background: #fbf1c0; }
+
+.row > div { display: flex; align-items: center; overflow: hidden; }
+.row > div:not(.row-horse) { justify-content: flex-end; padding-right: 6px; }
+
+/* Colonne cheval (num + nom) */
+.row-horse {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.row-num {
+  font-family: var(--cond);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--muted);
+  flex-shrink: 0;
+  width: 26px;
+  text-align: center;
+}
+.row-nom {
+  font-family: var(--cond);
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Colonnes snapshot */
+.row-snap {
+  font-family: var(--cond);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.row-snap.taken { color: var(--text); }
+.row-snap.diff-neg { color: var(--accent); }
+.row-snap.diff-pos { color: var(--danger); }
+
+/* Colonne live (devient un écart par rapport à Départ, comme H-1min/Départ) */
+.row-live {
+  font-family: var(--cond);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.row-live.diff-neg { color: var(--accent); }
+.row-live.diff-pos { color: var(--danger); }
+
+/* Colonne variation */
+.row-var {
+  font-family: var(--cond);
+  font-size: 24px;
+  font-weight: 900;
+  color: var(--dim);
+}
+.row-var.var-down-high { color: var(--danger); }
+.row-var.var-down-mid  { color: var(--warn); }
+.row-var.var-down-low  { color: var(--yellow); }
+.row-var.var-up        { color: var(--accent); }
+.row-var.var-none      { color: var(--dim); }
+
+.alert-tag {
+  font-size: 13px;
+  margin-left: 2px;
+  flex-shrink: 0;
+  line-height: 1;
+  letter-spacing: 0;
+  animation: tagPop 0.25s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+@keyframes tagPop {
+  from { transform: scale(0.5); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+.c-up   { color: var(--accent); }
+.c-none { color: var(--dim); }
+.c-low  { color: var(--yellow); }
+.c-mid  { color: var(--warn); }
+.c-high { color: var(--danger); }
+
+/* ── EMPTY ──────────────────────────────────────────── */
+.empty {
+  padding: 44px 15px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 2.4;
+  letter-spacing: 1px;
+}
+.empty .icon { font-size: 30px; opacity: 0.4; display: block; margin-bottom: 10px; }
+
+/* ── ALERTS PANEL ───────────────────────────────────── */
+#alertsPanel {
+  flex-shrink: 0;
+  background: var(--surface);
+  border-top: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease;
+}
+#alertsPanel.has-alerts { max-height: 200px; }
+
+#alertsPanelHeader {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+#alertsPanelHeader:hover { background: #eaecf2; }
+
+#alertsTitle {
+  font-family: var(--cond);
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#alertsBadge {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: var(--danger);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+#alertsBadge.show { display: inline-flex; }
+
+#alertsClear {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  transition: color 0.15s, border-color 0.15s;
+}
+#alertsClear:hover { color: var(--danger); border-color: var(--danger); }
+
+#alertsList {
+  overflow-y: auto;
+  flex: 1;
+}
+#alertsList::-webkit-scrollbar { width: 4px; }
+#alertsList::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.alert-row {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  height: 42px;
+  border-bottom: 1px solid var(--border);
+  background: var(--danger-bg);
+  gap: 0;
+  animation: alertRowIn 0.25s ease both;
+  overflow: hidden;
+}
+@keyframes alertRowIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.alert-row::before {
+  display: none;
+}
+
+.alert-row-race {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  width: 52px;
+  flex-shrink: 0;
+}
+.alert-row-num { display: none; }
+.alert-row-nom {
+  font-family: var(--cond);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+  flex: 1;
+  min-width: 0;
+}
+.alert-row-prev {
+  font-size: 12px;
+  color: var(--dim);
+  font-family: var(--mono);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+.alert-row-arrow {
+  font-size: 13px;
+  color: var(--danger);
+  font-family: var(--mono);
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+.alert-row-cote {
+  font-family: var(--cond);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--danger);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.alert-row-drop {
+  font-family: var(--cond);
+  font-size: 15px;
+  font-weight: 900;
+  color: #fff;
+  background: var(--danger);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.alert-row-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 1px;
+  margin-left: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+</style>
+</head>
+<body>
+
+<!-- TITLE BANNER -->
+<div id="titleBanner">
+  <h1>TBlaugrana BOT</h1>
+</div>
+
+<!-- COUNTDOWN BANNER -->
+<div id="countdownBanner">
+  <div id="cdTime"></div>
+  <div id="cdWrap">
+    <div id="cdMain">--:--</div>
+    <div id="cdSub">avant le départ</div>
+  </div>
+  <div id="cdIcon">🏇</div>
+</div>
+
+<!-- RACE NAVIGATOR -->
+<div class="race-nav">
+  <button class="nav-btn" id="btnPrev" onclick="navCourse(-1)" disabled title="Course précédente">◀</button>
+  <div class="nav-info">
+    <div class="nav-course" id="navCourse"><span class="nav-loading">Chargement...</span></div>
+    <div class="nav-meta" id="navMeta"></div>
+  </div>
+  <button class="nav-btn" id="btnNext" onclick="navCourse(+1)" disabled title="Course suivante">▶</button>
+</div>
+
+<!-- STATUS BAR -->
+<div id="statusBar">
+  <div id="statusDot"></div>
+  <span id="statusText">Connexion...</span>
+  <span id="courseCounter"></span>
+  <span id="snapshotInfo"></span>
+</div>
+
+<!-- ALERT BANNER -->
+<div id="alertBanner"></div>
+
+<!-- ERROR -->
+<div id="errBox" class="error-box"></div>
+
+<!-- TABLEAU PRINCIPAL -->
+<div id="tableWrap">
+  <div class="col-headers">
+    <div>Cheval</div>
+    <div id="hdrH3">3MIN</div>
+    <div>Live</div>
+    <div>Var.</div>
+  </div>
+  <div id="rows"></div>
+</div>
+
+<!-- ALERTS PANEL -->
+<div id="alertsPanel">
+  <div id="alertsPanelHeader" onclick="toggleAlertsPanel()">
+    <div id="alertsTitle">
+      🔔 Alertes
+      <span id="alertsBadge"></span>
+    </div>
+    <button id="alertsClear" onclick="event.stopPropagation(); clearAlerts()">Effacer</button>
+  </div>
+  <div id="alertsList"></div>
+</div>
+
+<script>
+// 👇 Remplace cette URL par l'URL de ton service Railway (ex: https://monbot.up.railway.app)
+const API = "REMPLACE_PAR_TON_URL_RAILWAY";
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                     ⚙️  PARAMETRES UTILISATEUR (interface)                  ║
+// ║           Modifiez uniquement cette section selon vos besoins               ║
+// ╠══════════════════════════════════════════════════════════════════════════════╣
+// ║                                                                              ║
+// ║  AUTO_ADVANCE_MIN : délai (en minutes) avant de basculer automatiquement    ║
+// ║                     vers la course suivante, dans deux cas :                ║
+// ║                       1) après le départ (+X min écoulées)                  ║
+// ║                       2) si les cotes sont figées depuis X min              ║
+// ║                     Défaut : 5  |  Minimum recommandé : 2                   ║
+const AUTO_ADVANCE_MIN = 5;
+// ║                                                                              ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// ── Navigation state ──────────────────────────────────────────────────────────
+let _allCourses   = [];
+let _curIdx       = -1;
+let _loadingNav   = false;
+let _autoAdvanced = false;
+let _frozenAutoAdvanced   = false;   // avance auto quand les cotes sont figées AUTO_ADVANCE_MIN min
+let _courseChangePending  = true;    // bloque les alertes jusqu'au 1er refresh propre
+let _pendingSeq           = 0;       // seq SSE au moment du changement de course (pour détecter le 1er refresh propre)
+let _userManualNav        = false;   // true si l'utilisateur a navigué manuellement → inhibe l'auto-avance
+let _manualCourseTs       = null;    // depart_ts de la course sélectionnée manuellement (bloque le SSE)
+
+// ── Countdown state (géré côté client, indépendant du serveur) ────────────────
+let _departTs   = null;   // timestamp départ (ms)
+let _departStr  = "";     // heure affichée "HH:MM"
+let _cdInterval = null;   // setInterval du décompte
+
+// ── Dernier état reçu (pour alertes) ─────────────────────────────────────────
+let _lastRefreshCount = 0;
+let _lastSeq          = 0;   // dernier seq reçu du serveur
+
+// ── Compteur de flammes par cheval (clé = "raceLabel-num") ───────────────────
+// Stockage PERSISTANT : on ne réinitialise plus au changement de course
+// Structure : _flameStore["R1C2"] = { flameCount: {"R1C2-3": 2}, prevAlertState: {"R1C2-3": true} }
+let _flameStore     = {};  // persistant toute la journée
+let _flameCount     = {};  // alias vers _flameStore[raceCurrent].flameCount
+let _flameSeen      = new Set();
+let _prevAlertState = {};  // alias vers _flameStore[raceCurrent].prevAlertState
+
+// ── Décompte côté client — tick toutes les secondes ──────────────────────────
+function startCountdown(departTs, departStr) {
+  _departTs  = departTs;
+  _departStr = departStr || "";
+
+  if (_cdInterval) clearInterval(_cdInterval);
+
+  const banner = document.getElementById("countdownBanner");
+  const cdMain = document.getElementById("cdMain");
+  const cdSub  = document.getElementById("cdSub");
+  const cdTime = document.getElementById("cdTime");
+
+  banner.classList.add("visible");
+  cdTime.textContent = _departStr;
+
+  function tick() {
+    const now = Date.now();
+    const sec = Math.round((_departTs - now) / 1000);
+
+    if (sec > 0) {
+      const m  = Math.floor(sec / 60);
+      const ss = String(sec % 60).padStart(2, "0");
+      cdMain.textContent = `-${m}:${ss}`;
+      cdMain.className   = sec <= 60 ? "imminent" : sec <= 180 ? "soon" : "";
+      cdSub.textContent  = "avant le départ";
+      document.body.classList.remove("race-started");
+    } else {
+      const elapsed = Math.abs(sec);
+      const em = Math.floor(elapsed / 60);
+      const es = String(elapsed % 60).padStart(2, "0");
+      cdMain.textContent = `+${em}:${es}`;
+      cdMain.className   = "gone";
+      cdSub.textContent  = "après le départ";
+      document.body.classList.add("race-started");
+
+      // Auto-avance à +AUTO_ADVANCE_MIN si course suivante disponible (seulement si pas de nav manuelle)
+      if (elapsed >= AUTO_ADVANCE_MIN * 60 && !_autoAdvanced && !_userManualNav && _curIdx < _allCourses.length - 1) {
+        _autoAdvanced = true;
+        navCourse(+1, false);  // false = auto, ne pas marquer comme navigation manuelle
+      }
+    }
+  }
+
+  tick();
+  _cdInterval = setInterval(tick, 1000);
+}
+
+function stopCountdown() {
+  if (_cdInterval) { clearInterval(_cdInterval); _cdInterval = null; }
+  _departTs = null;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+window.onload = () => {
+  loadAllCourses();
+  startStream();
+};
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+function startStream() {
+  if (!window.EventSource) { schedulePollFallback(); return; }
+  const es = new EventSource(API + "/api/stream");
+  es.onopen    = () => hideErr();
+  es.onmessage = (e) => {
+    try { updateUI(JSON.parse(e.data)); hideErr(); }
+    catch(_) {}
+  };
+  es.onerror = () => {
+    showErr("Connexion au serveur perdue — nouvelle tentative en cours...");
+    setStatusDot("error");
+  };
+}
+
+function schedulePollFallback() {
+  (async () => {
+    while (true) {
+      await fetchState();
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  })();
+}
+
+async function fetchState() {
+  try {
+    const s = await fetch(API + "/api/state").then(r => r.json());
+    updateUI(s);
+    hideErr();
+  } catch(e) {
+    showErr("Connexion au serveur perdue — nouvelle tentative en cours...");
+  }
+}
+
+// ── Mise à jour UI principale ─────────────────────────────────────────────────
+function updateUI(s) {
+  // Mettre à jour le seq courant
+  if (s.seq != null) _lastSeq = s.seq;
+
+  // Status dot
+  if (s.status === "live")     setStatusDot("live");
+  else if (s.status === "error") setStatusDot("error");
+  else                           setStatusDot("wait");
+
+  // Texte status
+  const statusTxt = document.getElementById("statusText");
+  const snapTxt = document.getElementById("snapshotInfo");
+  const snapTimeStr = s.h3_snapshot_ts
+    ? new Date(s.h3_snapshot_ts).toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit", second:"2-digit"})
+    : null;
+  if (s.status === "live") {
+    statusTxt.textContent = "LIVE · " + (s.last_update || "");
+    snapTxt.textContent = snapTimeStr ? `📷 ${snapTimeStr}` : "";
+  } else if (s.status === "scraping") {
+    statusTxt.textContent = "Récupération...";
+    snapTxt.textContent = snapTimeStr ? `📷 ${snapTimeStr}` : "";
+  } else if (s.status === "error") {
+    statusTxt.textContent = "Erreur";
+    if (s.error) showErr(s.error);
+  } else {
+    statusTxt.textContent = "En attente";
+    snapTxt.textContent = "";
+  }
+
+  // Départ → démarrer décompte client (seulement si changement)
+  // Si nav manuelle active, ignorer le depart_ts du SSE (qui suit la course du serveur)
+  if (!_userManualNav) {
+    if (s.depart_ts && s.depart_ts !== _departTs) {
+      startCountdown(s.depart_ts, s.depart_str || "");
+    } else if (!s.depart_ts && _departTs) {
+      stopCountdown();
+      document.getElementById("countdownBanner").classList.remove("visible");
+    }
+  }
+
+  // Lignes — le serveur a déjà filtré selon COTE_MIN/COTE_MAX, on ne re-filtre pas ici
+  const filteredRows = s.rows || [];
+  if (s.race_started) document.body.classList.add("race-started");
+
+  // ── Détection cotes figées → avance auto après AUTO_ADVANCE_MIN min sans mouvement ──────
+  // Inhibée si l'utilisateur a navigué manuellement vers une course précédente
+  if (s.last_odds_change_ts && !_frozenAutoAdvanced && !_loadingNav && !_userManualNav) {
+    const frozenSec = (Date.now() - s.last_odds_change_ts) / 1000;
+    const FROZEN_LIMIT = AUTO_ADVANCE_MIN * 60;
+    if (frozenSec >= FROZEN_LIMIT && _curIdx < _allCourses.length - 1) {
+      _frozenAutoAdvanced = true;
+      _userManualNav = false;
+      _departTs = null;   // forcer la reprise du countdown via SSE
+      document.getElementById("statusText").textContent = "Cotes figées — passage course suivante...";
+      setTimeout(() => navCourse(+1), 1500);
+    }
+  }
+
+  // Mettre à jour les flammes AVANT le rendu des lignes
+  // On attend que le serveur ait renvoyé au moins un refresh avec des données
+  // après le changement de course (_pendingSeq est le seq au moment du changement)
+  if (_courseChangePending) {
+    if (filteredRows.length > 0 && s.seq > _pendingSeq) {
+      _courseChangePending = false;   // 1er refresh propre reçu, on peut accepter des alertes
+    }
+  }
+
+  if (!_courseChangePending && filteredRows.some(r => r.alert)) {
+    const cur = _allCourses[_curIdx];
+    const raceLabel = cur ? `R${cur.rId}C${cur.cId}` : "?";
+    _pushAlerts(filteredRows, raceLabel);
+  }
+
+  renderRows(filteredRows, s.race_started || false);
+  // Alertes panel déjà alimenté dans _pushAlerts ci-dessus
+}
+
+// ── Rendu lignes ──────────────────────────────────────────────────────────────
+function renderRows(rows, raceStarted) {
+  const el = document.getElementById("rows");
+  const alertBanner = document.getElementById("alertBanner");
+
+  if (!rows.length) {
+    const c = _curIdx >= 0;
+    el.innerHTML = c
+      ? '<div class="empty"><span class="icon">📡</span>En attente des cotes...<br><small style="color:var(--dim)">Les paris doivent être ouverts</small></div>'
+      : '<div class="empty"><span class="icon">🏇</span>Chargement du programme...</div>';
+    alertBanner.className = "";
+    alertBanner.textContent = "";
+    return;
+  }
+
+  // Alerte globale (post-départ)
+  const alertHorses = rows.filter(r => r.alert);
+  if (alertHorses.length > 0) {
+    const lines = alertHorses.map(r => `⚠ #${r.num} ${r.nom}  ${r.cote_now?.toFixed(1)} (▼${r.drop_pct}%)`).join("   ");
+    alertBanner.textContent = lines;
+    alertBanner.className = "show";
+  } else {
+    alertBanner.className = "";
+    alertBanner.textContent = "";
+  }
+
+  // DOM diff
+  const existing = {};
+  el.querySelectorAll(".row[data-num]").forEach(r => existing[r.dataset.num] = r);
+  const newNums = new Set(rows.map(d => String(d.num)));
+  for (const num in existing) {
+    if (!newNums.has(num)) existing[num].remove();
+  }
+
+  rows.forEach((d, i) => {
+    const key    = String(d.num);
+    const hidden = d.cote_now > 20;
+
+    // Couleur highlight ligne
+    let rowCls = "";
+    if (d.alert)           rowCls = "hi-alert";
+    else if (d.drop_pct >= 30) rowCls = "hi-high";
+    else if (d.drop_pct >= 20) rowCls = "hi-mid";
+    else if (d.drop_pct > 0)   rowCls = "hi-low";
+
+    const nom = d.nom.length > 14 ? d.nom.substring(0, 13) + "." : d.nom;
+    const cur = _allCourses[_curIdx];
+    const raceLabel = cur ? `R${cur.rId}C${cur.cId}` : "?";
+    const flameKey  = `${raceLabel}-${d.num}`;
+    const flames    = _flameCount[flameKey] || 0;
+
+    // Snapshots — afficher "—" si pas encore pris
+    const fmtSnap = (v) => (v != null ? v.toFixed(1) : "—");
+    const h3txt = fmtSnap(d.cote_h3);
+
+    // Live : cote actuelle brute
+    const liveTxt = fmtSnap(d.cote_now);
+    const liveCls = "";
+
+    const alertHTML = flames > 0 ? `<span class="alert-tag">${"🔥".repeat(flames)}</span>` : "";
+
+    // Variation % entre H-3min et Live
+    const fmtVar = (h3, now) => {
+      if (h3 == null || now == null) return { txt: "—", cls: "var-none" };
+      const pct = ((now - h3) / h3) * 100;
+      if (Math.abs(pct) < 0.5) return { txt: "—", cls: "var-none" };
+      if (pct < 0) {
+        const abs = Math.abs(pct).toFixed(0);
+        const cls = pct <= -30 ? "var-down-high" : pct <= -20 ? "var-down-mid" : "var-down-low";
+        return { txt: `-${abs}%`, cls };
+      }
+      return { txt: `+${pct.toFixed(0)}%`, cls: "var-up" };
+    };
+    const varData = fmtVar(d.cote_h3, d.cote_now);
+    if (existing[key]) {
+      const row = existing[key];
+      row.className = `row ${rowCls}`;
+      row.style.display = hidden ? "none" : "";
+
+      // Numéro + nom du cheval — toujours resynchronisés sur les données
+      // fraîches du serveur (évite un nom figé/désynchronisé du numéro
+      // si l'API renvoie un nom différent pour ce numéro entre deux fetchs)
+      const numEl = row.querySelector(".row-num");
+      const nomEl = row.querySelector(".row-nom");
+      if (numEl && numEl.textContent !== String(d.num)) numEl.textContent = d.num;
+      if (nomEl) {
+        if (nomEl.getAttribute("title") !== d.nom) nomEl.setAttribute("title", d.nom);
+        // Ne réécrire que le texte (premier nœud), sans toucher au tag .alert-tag enfant
+        let textNode = [...nomEl.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
+        if (textNode) {
+          if (textNode.textContent !== nom) textNode.textContent = nom;
+        } else {
+          nomEl.insertBefore(document.createTextNode(nom), nomEl.firstChild);
+        }
+      }
+
+      // Snapshot H-3min
+      const h3El = row.querySelector(".snap-h3");
+      if (h3El) { h3El.textContent = h3txt; h3El.className = `row-snap snap-h3${d.cote_h3 != null ? " taken" : ""}`; }
+
+      // Live (cote actuelle brute)
+      const liveEl = row.querySelector(".row-live");
+      if (liveEl) { liveEl.textContent = liveTxt; liveEl.className = `row-live ${liveCls}`; }
+
+      // Variation
+      const varEl = row.querySelector(".row-var");
+      if (varEl) { varEl.textContent = varData.txt; varEl.className = `row-var ${varData.cls}`; }
+
+      // Flammes
+      let at = row.querySelector(".alert-tag");
+      if (flames > 0) {
+        if (!at) { const sp = document.createElement("span"); sp.className = "alert-tag"; row.querySelector(".row-nom").appendChild(sp); at = sp; }
+        const nf = "🔥".repeat(flames);
+        if (at.textContent !== nf) at.textContent = nf;
+      } else if (at) { at.remove(); }
+
+      const sibling = [...el.querySelectorAll(".row[data-num]")][i];
+      if (sibling !== row) el.insertBefore(row, sibling || null);
+    } else {
+      const div = document.createElement("div");
+      div.className = `row ${rowCls}`;
+      div.dataset.num = key;
+      if (hidden) div.style.display = "none";
+      div.innerHTML = `
+        <div class="row-horse">
+          <span class="row-num">${d.num}</span>
+          <span class="row-nom" title="${d.nom}">${nom}${alertHTML}</span>
+        </div>
+        <div class="row-snap snap-h3${d.cote_h3 != null ? " taken" : ""}">${h3txt}</div>
+        <div class="row-live ${liveCls}">${liveTxt}</div>
+        <div class="row-var ${varData.cls}">${varData.txt}</div>`;
+      const insertBefore = el.querySelectorAll(".row[data-num]")[i] || null;
+      el.insertBefore(div, insertBefore);
+    }
+  });
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+const RELOAD_RETRY_MS = 10000; // délai avant nouvelle tentative si le programme est vide/en erreur
+
+async function loadAllCourses(autoSelectIdx = null) {
+  // Mémoriser la course actuellement affichée pour la retrouver après rechargement
+  const currentCourse = _allCourses[_curIdx] || null;
+
+  setNavLoading("Récupération du programme...");
+  try {
+    const d = await fetch(API + "/api/reunions").then(r => r.json());
+    const reunions = d.reunions || [];
+    if (!reunions.length) {
+      if (d.error) {
+        setNavText("Erreur API PMU", "Nouvelle tentative dans 10s");
+        showErr("Erreur PMU : " + d.error + " — nouvelle tentative dans 10s");
+      } else {
+        setNavText("Aucune réunion aujourd'hui", "Nouvelle tentative dans 10s");
+        hideErr();
+      }
+      setTimeout(() => loadAllCourses(autoSelectIdx), RELOAD_RETRY_MS);
+      return;
+    }
+    hideErr();
+
+    const all = [];
+    // Chargement parallèle de toutes les réunions (au lieu de séquentiel)
+    const results = await Promise.all(reunions.map(reu =>
+      fetch(API + "/api/courses?reunion=" + reu.id).then(r => r.json()).catch(() => ({ courses: [] }))
+    ));
+    for (let i = 0; i < reunions.length; i++) {
+      const reu = reunions[i];
+      for (const c of (results[i].courses || [])) {
+        all.push({
+          rId: reu.id, rLabel: reu.label,
+          cId: c.id, cHeure: c.heure, cLabel: c.label,
+          heureDepart: c.heureDepart ? parseInt(c.heureDepart) : null
+        });
+      }
+    }
+
+    if (!all.length) {
+      setNavText("Aucune course trouvée", "Nouvelle tentative dans 10s");
+      setTimeout(() => loadAllCourses(autoSelectIdx), RELOAD_RETRY_MS);
+      return;
+    }
+
+    all.sort((a, b) => {
+      const ta = a.heureDepart || 0;
+      const tb = b.heureDepart || 0;
+      if (ta !== tb) return ta - tb;
+      if (a.rId !== b.rId) return parseInt(a.rId) - parseInt(b.rId);
+      return parseInt(a.cId) - parseInt(b.cId);
+    });
+
+    _allCourses = all;
+
+    let targetIdx;
+    if (autoSelectIdx !== null) {
+      // Index explicite demandé (nav précédent/suivant ou auto-avance)
+      targetIdx = autoSelectIdx;
+    } else if (currentCourse) {
+      // Rechargement : retrouver la même course par rId+cId
+      const found = all.findIndex(c => c.rId === currentCourse.rId && c.cId === currentCourse.cId);
+      targetIdx = found !== -1 ? found : _curIdx;
+    } else {
+      // Premier chargement / nouvel onglet : le JS vient de démarrer, donc
+      // _allCourses/_curIdx sont vides — mais le SERVEUR, lui, peut très bien
+      // avoir déjà une course sélectionnée et en cours de scraping depuis un
+      // moment (snapshot H-3min déjà pris, etc.). On demande d'abord au
+      // serveur quelle course il suit réellement, plutôt que de deviner
+      // depuis l'heure locale — ce qui évitait de "perdre" un snapshot déjà
+      // pris en sélectionnant par erreur une course voisine.
+      let serverIdx = -1;
+      try {
+        const st = await fetch(API + "/api/state").then(r => r.json());
+        if (st.selected_reunion && st.selected_course) {
+          serverIdx = all.findIndex(c =>
+            String(c.rId) === String(st.selected_reunion) &&
+            String(c.cId) === String(st.selected_course)
+          );
+        }
+      } catch (_) { /* tant pis, on retombe sur la devinette ci-dessous */ }
+
+      if (serverIdx !== -1) {
+        targetIdx = serverIdx;
+      } else {
+        // Aucune course suivie côté serveur (tout premier lancement, ou
+        // course du serveur introuvable dans le programme du jour) → on
+        // devine la prochaine course à venir, ou celle en cours si son
+        // départ remonte à moins de AUTO_ADVANCE_MIN minutes (même seuil
+        // que l'auto-avance, pour ne pas basculer trop tôt après un F5
+        // juste après le départ).
+        const now = Date.now();
+        const cutoff = now - AUTO_ADVANCE_MIN * 60 * 1000;
+        targetIdx = all.findIndex(c => c.heureDepart && c.heureDepart > cutoff);
+        if (targetIdx === -1) targetIdx = all.length - 1;
+        if (targetIdx < 0)   targetIdx = 0;
+      }
+    }
+
+    // Clamp au cas où le nombre de courses aurait changé
+    targetIdx = Math.max(0, Math.min(targetIdx, all.length - 1));
+
+    await selectCourseAt(targetIdx);
+  } catch(e) {
+    setNavText("Erreur de connexion", "Nouvelle tentative dans 10s");
+    showErr("Impossible de contacter le serveur. S'il était en veille, le réveil peut prendre jusqu'à 50s — patientez ou rechargez la page.");
+    setTimeout(() => loadAllCourses(autoSelectIdx), RELOAD_RETRY_MS);
+  }
+}
+
+async function navCourse(delta, manual = true) {
+  if (_loadingNav) return;
+  const newIdx = _curIdx + delta;
+  if (newIdx < 0 || newIdx >= _allCourses.length) return;
+  if (manual) {
+    if (delta < 0) {
+      // Navigation en arrière → bloquer l'auto-avance
+      _userManualNav = true;
+    } else {
+      // Navigation en avant → calculer la course "naturellement suivante"
+      const now = Date.now();
+      const naturalIdx = (() => {
+        const i = _allCourses.findIndex(c => c.heureDepart && c.heureDepart > now);
+        return i !== -1 ? i : _allCourses.length - 1;
+      })();
+      // Si l'utilisateur rejoint la course naturelle, lever le blocage
+      if (newIdx >= naturalIdx) {
+        _userManualNav = false;
+        _departTs = null;   // forcer la reprise du countdown via SSE
+      }
+    }
+  }
+  await selectCourseAt(newIdx);
+}
+
+async function selectCourseAt(idx) {
+  if (idx < 0 || idx >= _allCourses.length) return;
+  _loadingNav = true;
+  _curIdx = idx;
+  updateNavButtons();
+
+  const c = _allCourses[idx];
+  const rShort = c.rLabel.replace(/^R\d+ — /, "").substring(0, 16);
+  const cName  = c.cLabel.replace(/^C\d+ — /, "").substring(0, 16);
+  document.getElementById("navCourse").textContent = `R${c.rId} C${c.cId}`;
+  document.getElementById("navMeta").textContent   = rShort + (cName ? "  ·  " + cName : "");
+
+  document.getElementById("rows").innerHTML = '';
+  document.getElementById("countdownBanner").classList.remove("visible");
+  document.getElementById("alertBanner").className = "";
+  document.body.classList.remove("race-started");
+
+  // Basculer vers le store de flammes de la nouvelle course (persistant)
+  const newRaceLabel = `R${c.rId}C${c.cId}`;
+  if (!_flameStore[newRaceLabel]) {
+    _flameStore[newRaceLabel] = { flameCount: {}, prevAlertState: {}, alertLog: [] };
+  }
+  _flameCount     = _flameStore[newRaceLabel].flameCount;
+  _prevAlertState = _flameStore[newRaceLabel].prevAlertState;
+  _alertLog       = _flameStore[newRaceLabel].alertLog;
+  _flameSeen      = new Set();
+
+  _courseChangePending = true;   // bloquer les alertes jusqu'au 1er refresh propre
+  _pendingSeq          = _lastSeq;  // mémoriser le seq courant → on attend seq+1 du serveur
+  _renderAlertLog();
+
+  // Stopper le décompte avant de changer de course
+  stopCountdown();
+  _autoAdvanced       = false;
+  _frozenAutoAdvanced = false;
+
+  await post("/api/select", { reunion: c.rId, course: c.cId });
+
+  // Si la course a une heure connue, démarrer le décompte immédiatement
+  if (c.heureDepart) {
+    startCountdown(c.heureDepart, c.cHeure || "");
+  }
+
+  _loadingNav = false;
+  updateNavButtons();
+}
+
+function updateNavButtons() {
+  document.getElementById("btnPrev").disabled = _loadingNav || _curIdx <= 0;
+  document.getElementById("btnNext").disabled = _loadingNav || _curIdx >= _allCourses.length - 1;
+  updateCourseCounter();
+}
+
+function updateCourseCounter() {
+  const el = document.getElementById("courseCounter");
+  if (_allCourses.length > 0 && _curIdx >= 0) {
+    el.textContent = `${_curIdx + 1} sur ${_allCourses.length} courses`;
+  } else {
+    el.textContent = "";
+  }
+}
+
+function setNavLoading(msg) {
+  document.getElementById("navCourse").innerHTML = `<span class="nav-loading">${msg}</span>`;
+  document.getElementById("navMeta").textContent = "";
+  document.getElementById("btnPrev").disabled = true;
+  document.getElementById("btnNext").disabled = true;
+}
+
+function setNavText(main, meta) {
+  document.getElementById("navCourse").textContent = main;
+  document.getElementById("navMeta").textContent   = meta;
+}
+
+// ── Alerts Panel ──────────────────────────────────────────────────────────────
+// _alertLog est un alias vers _flameStore[raceCourante].alertLog (initialisé dans selectCourseAt)
+let _alertLog    = [];   // tableau courant (alias réaffecté à chaque changement de course)
+let _panelOpen   = true;
+
+function _pushAlerts(rows, raceLabel) {
+  let added = false;
+
+  rows.forEach(r => {
+    const key        = `${raceLabel}-${r.num}`;
+    const wasAlert   = _prevAlertState[key] || false;  // lire AVANT d'écraser
+    const isAlert    = r.alert || false;
+
+    // Mettre à jour l'état précédent
+    _prevAlertState[key] = isAlert;
+
+    // Front montant uniquement : false → true
+    if (isAlert && !wasAlert) {
+      _flameCount[key] = (_flameCount[key] || 0) + 1;
+
+      _alertLog.unshift({
+        race: raceLabel,
+        num:  r.num,
+        nom:  r.nom,
+        prev: r.cote_prev,
+        cote: r.cote_now,
+        drop: r.drop_pct,
+        time: new Date().toLocaleTimeString("fr-FR", {hour:"2-digit",minute:"2-digit",second:"2-digit"})
+      });
+      if (_alertLog.length > 3) _alertLog.splice(3);
+      // (le store référence déjà le même tableau — pas besoin de mise à jour séparée)
+      added = true;
+    }
+  });
+
+  if (added) _renderAlertLog();
+}
+
+function _renderAlertLog() {
+  const list    = document.getElementById("alertsList");
+  const badge   = document.getElementById("alertsBadge");
+  const panel   = document.getElementById("alertsPanel");
+
+  if (!_alertLog.length) {
+    panel.classList.remove("has-alerts");
+    badge.classList.remove("show");
+    list.innerHTML = "";
+    return;
+  }
+
+  panel.classList.add("has-alerts");
+  badge.textContent = Math.min(_alertLog.length, 3);
+  badge.classList.add("show");
+
+  list.innerHTML = _alertLog.map(a => {
+    const nom  = a.nom.length > 14 ? a.nom.substring(0,13) + "." : a.nom;
+    const prev = a.prev ? a.prev.toFixed(1) : "—";
+    return `<div class="alert-row">
+      <span class="alert-row-race">${a.race}</span>
+      <span class="alert-row-num">${a.num}</span>
+      <span class="alert-row-nom">N°${a.num} ${nom}</span>
+      <span class="alert-row-prev">${prev}</span>
+      <span class="alert-row-arrow">→</span>
+      <span class="alert-row-cote">${a.cote.toFixed(1)}</span>
+      <span class="alert-row-drop">-${Math.abs(a.drop)}%</span>
+      <span class="alert-row-time">${a.time}</span>
+    </div>`;
+  }).join("");
+}
+
+function clearAlerts() {
+  _alertLog.length = 0;
+  Object.keys(_flameCount).forEach(k => delete _flameCount[k]);
+  _flameSeen.clear();
+  Object.keys(_prevAlertState).forEach(k => delete _prevAlertState[k]);
+  // Mise à jour du store pour la course courante
+  const cur = _allCourses[_curIdx];
+  if (cur) {
+    const raceLabel = `R${cur.rId}C${cur.cId}`;
+    if (_flameStore[raceLabel]) {
+      _flameStore[raceLabel].alertLog      = [];
+      _flameStore[raceLabel].flameCount    = {};
+      _flameStore[raceLabel].prevAlertState = {};
+      _flameCount     = _flameStore[raceLabel].flameCount;
+      _prevAlertState = _flameStore[raceLabel].prevAlertState;
+      _alertLog       = _flameStore[raceLabel].alertLog;
+    }
+  }
+  _renderAlertLog();
+}
+
+function toggleAlertsPanel() {
+  // Panel s'ouvre/ferme au clic sur le header (future option)
+  // Pour l'instant le panel est toujours visible s'il y a des alertes
+}
+
+// Patch renderRows pour alimenter le log
+const _origRenderRows = renderRows;
+// On override après définition (voir bas du script)
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setStatusDot(state) {
+  const dot = document.getElementById("statusDot");
+  dot.className = state === "live" ? "live" : state === "error" ? "error" : "wait";
+}
+
+function post(path, body) {
+  return fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})}).then(r=>r.json()).catch(()=>({}));
+}
+function showErr(msg) { const e=document.getElementById("errBox"); e.textContent=msg; e.classList.add("show"); }
+function hideErr()    { document.getElementById("errBox").classList.remove("show"); }
+</script>
+</body>
+</html>
