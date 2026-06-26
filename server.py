@@ -374,7 +374,21 @@ def _build_state_payload() -> dict:
     # repasse à nouveau dans la plage.
     rows = [r for r in rows if COTE_MIN <= r["cote_now"] <= COTE_MAX]
 
-    rows.sort(key=lambda x: x["cote_now"])
+    # Dans les 3 dernières minutes, masquer les chevaux dont la cote remonte
+    # (drop_pct négatif = cote qui monte = cheval moins joué).
+    countdown_now = STATE.get("countdown_sec")
+    h3_taken_now  = STATE.get("h3_snapshot_taken", False)
+    if h3_taken_now and countdown_now is not None and countdown_now <= H3_SNAPSHOT_MIN * 60:
+        rows = [r for r in rows if r["drop_pct"] >= 0]
+
+    # Dans les 3 dernières minutes (snapshot H-3min pris) : trier par plus grosse
+    # chute de cote (drop_pct décroissant). Avant : trier par cote croissante.
+    countdown = STATE.get("countdown_sec")
+    h3_taken  = STATE.get("h3_snapshot_taken", False)
+    if h3_taken and countdown is not None and countdown <= H3_SNAPSHOT_MIN * 60:
+        rows.sort(key=lambda x: x["drop_pct"], reverse=True)
+    else:
+        rows.sort(key=lambda x: x["cote_now"])
 
     # ── Classement des chutes depuis le screen H-3min ──────────────────────
     # Compare la cote figée au moment du screen (h3_snapshot) à la cote
