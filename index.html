@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -341,26 +342,26 @@ html, body {
   gap: 4px;
 }
 
-/* Colonnes snapshot */
+/* Colonnes snapshot — grisée (référence figée) */
 .row-snap {
   font-family: var(--cond);
   font-size: 22px;
   font-weight: 600;
   color: var(--dim);
 }
-.row-snap.taken { color: var(--text); }
-.row-snap.diff-neg { color: var(--accent); }
-.row-snap.diff-pos { color: var(--danger); }
+.row-snap.taken { color: var(--dim); }
+.row-snap.diff-neg { color: var(--dim); }
+.row-snap.diff-pos { color: var(--dim); }
 
-/* Colonne live (devient un écart par rapport à Départ, comme H-1min/Départ) */
+/* Colonne live — mise en valeur (cote actuelle) */
 .row-live {
   font-family: var(--cond);
   font-size: 22px;
-  font-weight: 600;
-  color: var(--dim);
+  font-weight: 700;
+  color: var(--text);
 }
-.row-live.diff-neg { color: var(--accent); }
-.row-live.diff-pos { color: var(--danger); }
+.row-live.diff-neg { color: var(--text); }
+.row-live.diff-pos { color: var(--text); }
 
 /* Colonne variation */
 .row-var {
