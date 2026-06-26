@@ -374,17 +374,23 @@ def _build_state_payload() -> dict:
     # repasse à nouveau dans la plage.
     rows = [r for r in rows if COTE_MIN <= r["cote_now"] <= COTE_MAX]
 
-    # Dès que le snapshot H-3min est pris, masquer les chevaux dont la cote
-    # remonte (drop_pct négatif = cote qui monte = cheval moins joué).
-    h3_taken_now = STATE.get("h3_snapshot_taken", False)
-    if h3_taken_now:
-        rows = [r for r in rows if r["drop_pct"] >= 0]
-
-    # Dès que le snapshot H-3min est pris : trier par plus grosse chute de
-    # cote (drop_pct décroissant). Avant le snapshot : trier par cote croissante.
+    # Dès que le snapshot H-3min est pris : tri et masquage basés sur la chute
+    # DEPUIS CE SNAPSHOT (cote_h3 → cote_now) — la même référence que celle
+    # affichée dans la colonne "VAR." côté client. Important : on n'utilise
+    # PAS le "drop_pct" tick-à-tick (qui compare au fetch précédent, donc
+    # quasi toujours ≈0 et ne reflète pas la chute réelle depuis le screen).
     h3_taken = STATE.get("h3_snapshot_taken", False)
     if h3_taken:
-        rows.sort(key=lambda x: x["drop_pct"], reverse=True)
+        for r in rows:
+            c_h3 = r.get("cote_h3")
+            r["drop_h3_pct"] = (
+                round((c_h3 - r["cote_now"]) / c_h3 * 100, 1) if c_h3 else 0.0
+            )
+        # Masquer les chevaux dont la cote est remontée depuis le snapshot
+        # (drop_h3_pct négatif = cote qui monte = cheval moins joué).
+        rows = [r for r in rows if r["drop_h3_pct"] >= 0]
+        # Trier de la plus grosse chute à la plus petite
+        rows.sort(key=lambda x: x["drop_h3_pct"], reverse=True)
     else:
         rows.sort(key=lambda x: x["cote_now"])
 
