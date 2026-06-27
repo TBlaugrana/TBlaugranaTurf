@@ -50,6 +50,22 @@ except ImportError:
     except Exception:
         import json as _json_lib
 
+# ── Fuseau horaire (Europe/Paris, gère automatiquement CET/CEST) ──────────────
+# Render fait tourner le conteneur en UTC par défaut. Sans préciser ce fuseau,
+# tous les `datetime.now()` / `datetime.fromtimestamp()` du script (heure de
+# départ affichée, "LIVE · HH:MM:SS"...) étaient calculés en UTC — soit 1h
+# (heure d'hiver) ou 2h (heure d'été, comme actuellement) de moins que l'heure
+# réelle en France. Les timestamps epoch bruts (depart_ts, countdown, etc.)
+# n'étaient eux PAS affectés — seul l'AFFICHAGE était décalé.
+from zoneinfo import ZoneInfo
+try:
+    PARIS_TZ = ZoneInfo("Europe/Paris")
+except Exception:
+    import subprocess, sys
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "tzdata",
+                           "--break-system-packages", "-q"])
+    PARIS_TZ = ZoneInfo("Europe/Paris")
+
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                        ⚙️  PARAMETRES UTILISATEUR                           ║
@@ -155,6 +171,8 @@ STATE = {
     "hd_snapshot"          : {},      # cotes figées au moment du départ (countdown <= 0)
     "hd_snapshot_taken"    : False,
     "hd_snapshot_ts"       : None,
+    "history"              : [],      # courses du jour déjà terminées (résumé figé, voir _archive_current_course)
+    "history_date"         : None,    # date (ddmmyyyy) à laquelle "history" correspond — sert à purger au changement de jour
 }
 _state_lock = threading.Lock()
 
@@ -198,7 +216,7 @@ _today_date:  int = 0
 
 def today() -> str:
     global _today_cache, _today_date
-    d = datetime.now()
+    d = datetime.now(PARIS_TZ)
     jd = d.toordinal()
     if jd != _today_date:
         _today_cache = d.strftime("%d%m%Y")
@@ -243,7 +261,7 @@ async def fetch_courses_async(r_num: str) -> list:
         ts    = c.get("heureDepart")
         if ts:
             try:
-                heure = datetime.fromtimestamp(int(ts) / 1000).strftime("%H:%M")
+                heure = datetime.fromtimestamp(int(ts) / 1000, PARIS_TZ).strftime("%H:%M")
             except Exception:
                 pass
         out.append({
@@ -441,6 +459,58 @@ def _build_state_payload() -> dict:
         "hd_snapshot_ts"      : STATE.get("hd_snapshot_ts"),
     }
 
+# ── Historique des courses du jour ────────────────────────────────────────────
+
+def _archive_current_course() -> None:
+    """Sauvegarde un résumé figé (snapshots H-3/H-1/Départ, cotes finales,
+    classement des chutes) de la course actuellement suivie dans
+    STATE["history"], AVANT qu'elle soit remplacée par la suivante.
+
+    Appelée à deux endroits : juste avant _apply_selection() (bascule
+    automatique serveur) et juste avant la remise à zéro dans le handler
+    POST /api/select (changement manuel de course depuis le navigateur).
+    Sans cet appel, les snapshots/cotes de la course qui se termine sont
+    perdus dès qu'on change de course — c'est ce que cette fonction corrige.
+
+    Ne fait rien si aucune cote n'a jamais été récupérée pour la course en
+    cours (rien d'utile à conserver — ex: course jamais réellement suivie).
+    """
+    r = STATE.get("selected_reunion")
+    c = STATE.get("selected_course")
+    if not (r and c) or not STATE.get("odds"):
+        return
+
+    # Purge automatique au changement de jour calendaire : on ne garde que
+    # les courses du jour en cours (le programme PMU change de toute façon
+    # chaque jour, ça n'aurait pas de sens de mélanger avec la veille).
+    cur_day = today()
+    if STATE.get("history_date") != cur_day:
+        STATE["history"]      = []
+        STATE["history_date"] = cur_day
+
+    try:
+        snapshot = _build_state_payload()
+        snapshot["archived_at"] = int(time.time() * 1000)
+    except Exception as exc:
+        print(f"  [HISTORIQUE] Erreur construction snapshot R{r}C{c} : {exc}")
+        return
+
+    hist = STATE["history"]
+    # Évite un doublon si la fonction est appelée deux fois pour la même
+    # course (ex: bascule serveur ET sélection manuelle quasi simultanées) —
+    # on remplace alors l'entrée précédente plutôt que d'empiler un doublon.
+    if hist and str(hist[-1].get("selected_reunion")) == str(r) and str(hist[-1].get("selected_course")) == str(c):
+        hist[-1] = snapshot
+    else:
+        hist.append(snapshot)
+
+    # Garde-fou mémoire (très large pour une seule journée de courses PMU)
+    if len(hist) > 200:
+        STATE["history"] = hist[-200:]
+
+    print(f"  [HISTORIQUE] Course R{r}C{c} archivée "
+          f"({len(snapshot.get('rows', []))} chevaux) — {len(STATE['history'])} courses en mémoire aujourd'hui")
+
 # ── Boucle scraping async (toutes les 5 secondes) ─────────────────────────────
 
 async def scrape_loop_async() -> None:
@@ -477,7 +547,7 @@ async def scrape_loop_async() -> None:
                     prev_snapshot          = STATE.get("odds", {}).copy()
                     STATE["odds_prev"]     = prev_snapshot
                     STATE["odds"]          = odds
-                    STATE["last_update"]   = datetime.now().strftime("%H:%M:%S")
+                    STATE["last_update"]   = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
                     STATE["refresh_count"] += 1
                     STATE["error"]         = None
 
@@ -498,7 +568,7 @@ async def scrape_loop_async() -> None:
                         STATE["h3_snapshot_taken"] = True
                         STATE["h3_snapshot_ts"]    = now_ms
                         print(f"  [SNAPSHOT] H-3min pris pour R{r}C{c} à "
-                              f"{datetime.fromtimestamp(now_ms/1000).strftime('%H:%M:%S')} "
+                              f"{datetime.fromtimestamp(now_ms/1000, PARIS_TZ).strftime('%H:%M:%S')} "
                               f"(countdown={STATE['countdown_sec']}s, {len(odds)} chevaux)")
 
                     # ── Screen automatique H-1min ──
@@ -512,7 +582,7 @@ async def scrape_loop_async() -> None:
                         STATE["h1_snapshot_taken"] = True
                         STATE["h1_snapshot_ts"]    = now_ms
                         print(f"  [SNAPSHOT] H-1min pris pour R{r}C{c} à "
-                              f"{datetime.fromtimestamp(now_ms/1000).strftime('%H:%M:%S')} "
+                              f"{datetime.fromtimestamp(now_ms/1000, PARIS_TZ).strftime('%H:%M:%S')} "
                               f"(countdown={STATE['countdown_sec']}s, {len(odds)} chevaux)")
 
                     # ── Screen automatique H-départ (1er fetch après countdown <= 0) ──
@@ -526,7 +596,7 @@ async def scrape_loop_async() -> None:
                         STATE["hd_snapshot_taken"] = True
                         STATE["hd_snapshot_ts"]    = now_ms
                         print(f"  [SNAPSHOT] Départ pris pour R{r}C{c} à "
-                              f"{datetime.fromtimestamp(now_ms/1000).strftime('%H:%M:%S')} "
+                              f"{datetime.fromtimestamp(now_ms/1000, PARIS_TZ).strftime('%H:%M:%S')} "
                               f"(countdown={STATE['countdown_sec']}s, {len(odds)} chevaux)")
 
                     STATE["status"] = "live"
@@ -574,9 +644,9 @@ async def _depart_refresh_loop() -> None:
                     ts_old = STATE.get("depart_ts")
                     if ts_new != ts_old:
                         STATE["depart_ts"]  = ts_new
-                        STATE["depart_str"] = datetime.fromtimestamp(ts_new / 1000).strftime("%H:%M")
+                        STATE["depart_str"] = datetime.fromtimestamp(ts_new / 1000, PARIS_TZ).strftime("%H:%M")
                         print(f"  [DEPART] Heure mise à jour R{r}C{c} : "
-                              f"{datetime.fromtimestamp((ts_old or 0)/1000).strftime('%H:%M') if ts_old else '?'} "
+                              f"{datetime.fromtimestamp((ts_old or 0)/1000, PARIS_TZ).strftime('%H:%M') if ts_old else '?'} "
                               f"→ {STATE['depart_str']}")
                     else:
                         print(f"  [DEPART] Heure confirmée R{r}C{c} : {STATE['depart_str']} (inchangée)")
@@ -590,6 +660,7 @@ async def _depart_refresh_loop() -> None:
 def _apply_selection(new_r: str, new_c: str, new_ts: int) -> None:
     """Bascule STATE vers une nouvelle course et réinitialise tous les
     snapshots / compteurs liés à la course précédente."""
+    _archive_current_course()
     with _state_lock:
         STATE["selected_reunion"]    = new_r
         STATE["selected_course"]     = new_c
@@ -597,7 +668,7 @@ def _apply_selection(new_r: str, new_c: str, new_ts: int) -> None:
         STATE["odds_prev"]           = {}
         STATE["error"]               = None
         STATE["depart_ts"]           = new_ts
-        STATE["depart_str"]          = datetime.fromtimestamp(new_ts / 1000).strftime("%H:%M")
+        STATE["depart_str"]          = datetime.fromtimestamp(new_ts / 1000, PARIS_TZ).strftime("%H:%M")
         STATE["countdown_sec"]       = None
         STATE["refresh_count"]       = 0
         STATE["dropped_horses"]      = []
@@ -664,7 +735,7 @@ async def _auto_advance_loop() -> None:
                 target = next((x for x in all_courses if x[2] > cutoff), all_courses[-1])
                 new_r, new_c, new_ts = target
                 print(f"  [AUTO-AVANCE] Démarrage à froid (aucune course suivie) "
-                      f"→ sélection R{new_r}C{new_c} (départ {datetime.fromtimestamp(new_ts/1000).strftime('%H:%M')})")
+                      f"→ sélection R{new_r}C{new_c} (départ {datetime.fromtimestamp(new_ts/1000, PARIS_TZ).strftime('%H:%M')})")
                 _apply_selection(new_r, new_c, new_ts)
                 continue
 
@@ -791,6 +862,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/state":
             self.send_json(_build_state_payload())
 
+        elif path == "/api/history":
+            # Historique des courses du jour déjà terminées (snapshots figés,
+            # cotes finales, classement des chutes) — voir _archive_current_course().
+            # Purgé automatiquement au changement de jour calendaire.
+            self.send_json({"history": STATE.get("history", [])})
+
         elif path == "/api/ping":
             # Endpoint léger pour un service de ping externe (ex: cron-job.org)
             # qui empêche Render de mettre le service en veille. Ne fait
@@ -855,6 +932,7 @@ class Handler(BaseHTTPRequestHandler):
                     # conservés tels quels.
                     self.send_json({"ok": True})
                     return
+                _archive_current_course()
                 STATE["odds"]          = {}
                 STATE["odds_prev"]     = {}
                 STATE["error"]         = None
@@ -880,7 +958,7 @@ class Handler(BaseHTTPRequestHandler):
                         if str(co["id"]) == str(c_num) and co.get("heureDepart"):
                             ts = int(co["heureDepart"])
                             STATE["depart_ts"]  = ts
-                            STATE["depart_str"] = datetime.fromtimestamp(ts/1000).strftime("%H:%M")
+                            STATE["depart_str"] = datetime.fromtimestamp(ts/1000, PARIS_TZ).strftime("%H:%M")
                             break
                 except Exception as exc:
                     print(f"  [WARN] heureDepart: {exc}")
