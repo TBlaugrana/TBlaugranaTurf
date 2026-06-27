@@ -406,60 +406,72 @@ html, body {
 }
 .empty .icon { font-size: 30px; opacity: 0.4; display: block; margin-bottom: 10px; }
 
-/* ── ALERTS PANEL ───────────────────────────────────── */
+/* ── ALERTES / HISTORIQUE PANEL ─────────────────────── */
 #alertsPanel {
   flex-shrink: 0;
   background: var(--surface);
   border-top: 2px solid var(--border);
   display: flex;
   flex-direction: column;
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.35s ease;
 }
-#alertsPanel.has-alerts { max-height: 200px; }
 
+/* En-tête à onglets — toujours visible, donne un accès permanent à
+   "Historique" même quand son contenu est encore vide. */
 #alertsPanelHeader {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 14px;
+  padding: 5px 10px;
   background: var(--surface2);
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
   user-select: none;
 }
-#alertsPanelHeader:hover { background: #eaecf2; }
 
-#alertsTitle {
-  font-family: var(--cond);
-  font-weight: 900;
-  font-size: 14px;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--muted);
+.panel-tabs {
   flex: 1;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 4px;
+  min-width: 0;
 }
-#alertsBadge {
+.panel-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--cond);
+  font-weight: 900;
+  font-size: 13px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 5px 9px;
+  border-radius: 5px;
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+.panel-tab:hover  { background: #eaecf2; }
+.panel-tab.active { color: var(--text); background: var(--surface); box-shadow: inset 0 -2px 0 var(--accent); }
+
+.panel-badge {
   display: none;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
+  min-width: 18px;
+  height: 18px;
   padding: 0 5px;
   border-radius: 99px;
   background: var(--danger);
   color: #fff;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   line-height: 1;
 }
-#alertsBadge.show { display: inline-flex; }
+.panel-badge.show { display: inline-flex; }
+.panel-badge.history { background: var(--warn); }
 
 #alertsClear {
   font-family: var(--mono);
@@ -473,15 +485,26 @@ html, body {
   border-radius: 4px;
   background: none;
   transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
 }
 #alertsClear:hover { color: var(--danger); border-color: var(--danger); }
 
-#alertsList {
+/* Corps du panneau — se déploie seulement si l'onglet actif a du contenu */
+#alertsBody {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease;
+  display: flex;
+  flex-direction: column;
+}
+#alertsBody.open { max-height: 200px; }
+
+#alertsList, #historyList {
   overflow-y: auto;
   flex: 1;
 }
-#alertsList::-webkit-scrollbar { width: 4px; }
-#alertsList::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+#alertsList::-webkit-scrollbar, #historyList::-webkit-scrollbar { width: 4px; }
+#alertsList::-webkit-scrollbar-thumb, #historyList::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .alert-row {
   display: flex;
@@ -570,6 +593,91 @@ html, body {
   flex-shrink: 0;
 }
 
+/* ── HISTORIQUE (chutes ≥ seuil depuis le screen H-3min) ───────────── */
+.history-row {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  height: 42px;
+  border-bottom: 1px solid var(--border);
+  background: var(--warn-bg);
+  animation: alertRowIn 0.25s ease both;
+  overflow: hidden;
+}
+.history-row-race {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  width: 52px;
+  flex-shrink: 0;
+}
+.history-row-nom {
+  font-family: var(--cond);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.3px;
+  flex: 1;
+  min-width: 0;
+}
+.history-row-h3 {
+  font-size: 12px;
+  color: var(--dim);
+  font-family: var(--mono);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+.history-row-arrow {
+  font-size: 13px;
+  color: var(--warn);
+  font-family: var(--mono);
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+.history-row-cote {
+  font-family: var(--cond);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--warn);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.history-row-drop {
+  font-family: var(--cond);
+  font-size: 15px;
+  font-weight: 900;
+  color: #fff;
+  background: var(--warn);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.history-row-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 1px;
+  margin-left: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.history-empty {
+  padding: 22px 15px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
 </style>
 </head>
 <body>
@@ -624,16 +732,23 @@ html, body {
   <div id="rows"></div>
 </div>
 
-<!-- ALERTS PANEL -->
+<!-- ALERTES / HISTORIQUE PANEL -->
 <div id="alertsPanel">
-  <div id="alertsPanelHeader" onclick="toggleAlertsPanel()">
-    <div id="alertsTitle">
-      🔔 Alertes
-      <span id="alertsBadge"></span>
+  <div id="alertsPanelHeader">
+    <div class="panel-tabs">
+      <button class="panel-tab active" id="tabAlerts" onclick="switchPanelTab('alerts')">
+        🔔 Alertes <span id="alertsBadge" class="panel-badge"></span>
+      </button>
+      <button class="panel-tab" id="tabHistory" onclick="switchPanelTab('history')">
+        📉 Historique <span id="historyBadge" class="panel-badge history"></span>
+      </button>
     </div>
-    <button id="alertsClear" onclick="event.stopPropagation(); clearAlerts()">Effacer</button>
+    <button id="alertsClear" onclick="event.stopPropagation(); clearActiveTab()">Effacer</button>
   </div>
-  <div id="alertsList"></div>
+  <div id="alertsBody">
+    <div id="alertsList"></div>
+    <div id="historyList" style="display:none;"></div>
+  </div>
 </div>
 
 <script>
@@ -650,6 +765,13 @@ const API = "https://web-production-51002.up.railway.app";
 // ║                       2) si les cotes sont figées depuis X min              ║
 // ║                     Défaut : 5  |  Minimum recommandé : 2                   ║
 const AUTO_ADVANCE_MIN = 5;
+// ║                                                                              ║
+// ║  HISTORY_DROP_THRESHOLD : seuil de chute (%) depuis le screen H-3min       ║
+// ║                     au-delà duquel un cheval est enregistré dans           ║
+// ║                     l'onglet "Historique" (avec sa course et sa            ║
+// ║                     variation). Indépendant de DROP_ALERT côté serveur.    ║
+// ║                     Défaut : 25                                            ║
+const HISTORY_DROP_THRESHOLD = 25;
 // ║                                                                              ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -680,6 +802,14 @@ let _flameStore     = {};  // persistant toute la journée
 let _flameCount     = {};  // alias vers _flameStore[raceCurrent].flameCount
 let _flameSeen      = new Set();
 let _prevAlertState = {};  // alias vers _flameStore[raceCurrent].prevAlertState
+
+// ── Historique des chutes ≥ HISTORY_DROP_THRESHOLD% depuis le screen H-3min ──
+// Contrairement aux flammes/alertes, CE journal n'est PAS remis à zéro au
+// changement de course : c'est une liste plate, valable pour toute la
+// session, qui accumule les chevaux de TOUTES les courses consultées.
+let _historyLog   = [];   // [{ race, num, nom, cote_h3, cote_min, drop_pct, time }, ...]
+let _historyIndex = {};   // clé "race-num" → référence à l'entrée (mise à jour en place)
+let _activeTab     = "alerts";   // onglet actif du panneau : "alerts" | "history"
 
 // ── Décompte côté client — tick toutes les secondes ──────────────────────────
 function startCountdown(departTs, departStr) {
@@ -841,10 +971,13 @@ function updateUI(s) {
     }
   }
 
-  if (!_courseChangePending && filteredRows.some(r => r.alert)) {
+  if (!_courseChangePending) {
     const cur = _allCourses[_curIdx];
     const raceLabel = cur ? `R${cur.rId}C${cur.cId}` : "?";
-    _pushAlerts(filteredRows, raceLabel);
+    _pushHistory(filteredRows, raceLabel);
+    if (filteredRows.some(r => r.alert)) {
+      _pushAlerts(filteredRows, raceLabel);
+    }
   }
 
   renderRows(filteredRows, s.race_started || false);
@@ -1237,35 +1370,32 @@ function _pushAlerts(rows, raceLabel) {
 }
 
 function _renderAlertLog() {
-  const list    = document.getElementById("alertsList");
-  const badge   = document.getElementById("alertsBadge");
-  const panel   = document.getElementById("alertsPanel");
+  const list  = document.getElementById("alertsList");
+  const badge = document.getElementById("alertsBadge");
 
   if (!_alertLog.length) {
-    panel.classList.remove("has-alerts");
     badge.classList.remove("show");
     list.innerHTML = "";
-    return;
+  } else {
+    badge.textContent = Math.min(_alertLog.length, 3);
+    badge.classList.add("show");
+
+    list.innerHTML = _alertLog.map(a => {
+      const nom  = a.nom.length > 14 ? a.nom.substring(0,13) + "." : a.nom;
+      const prev = a.prev ? a.prev.toFixed(1) : "—";
+      return `<div class="alert-row">
+        <span class="alert-row-race">${a.race}</span>
+        <span class="alert-row-num">${a.num}</span>
+        <span class="alert-row-nom">N°${a.num} ${nom}</span>
+        <span class="alert-row-prev">${prev}</span>
+        <span class="alert-row-arrow">→</span>
+        <span class="alert-row-cote">${a.cote.toFixed(1)}</span>
+        <span class="alert-row-drop">-${Math.abs(a.drop)}%</span>
+        <span class="alert-row-time">${a.time}</span>
+      </div>`;
+    }).join("");
   }
-
-  panel.classList.add("has-alerts");
-  badge.textContent = Math.min(_alertLog.length, 3);
-  badge.classList.add("show");
-
-  list.innerHTML = _alertLog.map(a => {
-    const nom  = a.nom.length > 14 ? a.nom.substring(0,13) + "." : a.nom;
-    const prev = a.prev ? a.prev.toFixed(1) : "—";
-    return `<div class="alert-row">
-      <span class="alert-row-race">${a.race}</span>
-      <span class="alert-row-num">${a.num}</span>
-      <span class="alert-row-nom">N°${a.num} ${nom}</span>
-      <span class="alert-row-prev">${prev}</span>
-      <span class="alert-row-arrow">→</span>
-      <span class="alert-row-cote">${a.cote.toFixed(1)}</span>
-      <span class="alert-row-drop">-${Math.abs(a.drop)}%</span>
-      <span class="alert-row-time">${a.time}</span>
-    </div>`;
-  }).join("");
+  _updateBodyOpen();
 }
 
 function clearAlerts() {
@@ -1289,9 +1419,99 @@ function clearAlerts() {
   _renderAlertLog();
 }
 
-function toggleAlertsPanel() {
-  // Panel s'ouvre/ferme au clic sur le header (future option)
-  // Pour l'instant le panel est toujours visible s'il y a des alertes
+// ── Historique (onglet) ──────────────────────────────────────────────────────
+// Enregistre, pour TOUTES les courses consultées dans la session, chaque
+// cheval dont la cote a chuté de HISTORY_DROP_THRESHOLD% ou plus depuis le
+// screen H-3min (même référence que la colonne "Var." du tableau). Une
+// entrée est créée une seule fois par cheval/course (front montant), puis
+// mise à jour en place si la chute s'accentue encore par la suite — elle
+// n'est jamais retirée automatiquement, même si la cote remonte ensuite.
+function _pushHistory(rows, raceLabel) {
+  let added = false;
+
+  rows.forEach(r => {
+    if (r.cote_h3 == null || r.cote_now == null || r.cote_h3 <= 0) return;
+    const pct = ((r.cote_now - r.cote_h3) / r.cote_h3) * 100;   // négatif = chute
+    if (pct > -HISTORY_DROP_THRESHOLD) return;
+
+    const key      = `${raceLabel}-${r.num}`;
+    const dropAbs  = Math.round(Math.abs(pct) * 10) / 10;
+    let entry      = _historyIndex[key];
+
+    if (!entry) {
+      entry = {
+        race: raceLabel, num: r.num, nom: r.nom,
+        cote_h3: r.cote_h3, cote_min: r.cote_now,
+        drop_pct: dropAbs,
+        time: new Date().toLocaleTimeString("fr-FR", {hour:"2-digit",minute:"2-digit",second:"2-digit"})
+      };
+      _historyIndex[key] = entry;
+      _historyLog.unshift(entry);
+      added = true;
+    } else if (r.cote_now < entry.cote_min) {
+      // La chute s'accentue depuis l'enregistrement initial → on reflète la pire valeur observée
+      entry.cote_min = r.cote_now;
+      entry.drop_pct = dropAbs;
+      added = true;
+    }
+  });
+
+  if (added) _renderHistoryLog();
+}
+
+function _renderHistoryLog() {
+  const list  = document.getElementById("historyList");
+  const badge = document.getElementById("historyBadge");
+
+  if (!_historyLog.length) {
+    badge.classList.remove("show");
+    list.innerHTML = `<div class="history-empty">Aucune chute ≥${HISTORY_DROP_THRESHOLD}% enregistrée</div>`;
+  } else {
+    badge.textContent = _historyLog.length;
+    badge.classList.add("show");
+
+    list.innerHTML = _historyLog.map(h => {
+      const nom = h.nom.length > 14 ? h.nom.substring(0,13) + "." : h.nom;
+      return `<div class="history-row">
+        <span class="history-row-race">${h.race}</span>
+        <span class="history-row-nom">N°${h.num} ${nom}</span>
+        <span class="history-row-h3">${h.cote_h3.toFixed(1)}</span>
+        <span class="history-row-arrow">→</span>
+        <span class="history-row-cote">${h.cote_min.toFixed(1)}</span>
+        <span class="history-row-drop">-${h.drop_pct}%</span>
+        <span class="history-row-time">${h.time}</span>
+      </div>`;
+    }).join("");
+  }
+  _updateBodyOpen();
+}
+
+function clearHistory() {
+  _historyLog.length = 0;
+  Object.keys(_historyIndex).forEach(k => delete _historyIndex[k]);
+  _renderHistoryLog();
+}
+
+function clearActiveTab() {
+  if (_activeTab === "history") clearHistory();
+  else clearAlerts();
+}
+
+function switchPanelTab(tab) {
+  _activeTab = tab;
+  document.getElementById("tabAlerts").classList.toggle("active", tab === "alerts");
+  document.getElementById("tabHistory").classList.toggle("active", tab === "history");
+  document.getElementById("alertsList").style.display  = tab === "alerts"  ? "" : "none";
+  document.getElementById("historyList").style.display = tab === "history" ? "" : "none";
+  _updateBodyOpen();
+}
+
+// Le corps du panneau ne se déploie que si l'onglet ACTIF a du contenu —
+// l'en-tête (avec les deux onglets) reste lui toujours visible et cliquable.
+function _updateBodyOpen() {
+  const body = document.getElementById("alertsBody");
+  const hasContent = _activeTab === "history" ? _historyLog.length > 0 : _alertLog.length > 0;
+  body.classList.toggle("open", hasContent);
 }
 
 // Patch renderRows pour alimenter le log
