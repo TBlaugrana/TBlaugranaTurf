@@ -233,12 +233,32 @@ async def fetch_json_async(url: str) -> dict:
         raw = await resp.read()
         return _json_lib.loads(raw)
 
+# Réunions à exclure de l'affichage : Hong Kong (2 hippodromes : Happy Valley,
+# Sha Tin) demandé en masquage. Filtrage textuel sur le libellé hippodrome et,
+# si présent, sur le code pays — résilient même si l'un des deux champs manque
+# ou change de format côté PMU.
+HIPPODROMES_MASQUES = ("HONG KONG", "HONG-KONG", "HAPPY VALLEY", "SHA TIN")
+PAYS_MASQUES        = ("HK", "HKG")
+
+def _reunion_est_masquee(r: dict) -> bool:
+    hippo = r.get("hippodrome") or {}
+    lieu  = (hippo.get("libelleLong") or hippo.get("libelleCourt") or "").upper()
+    if any(nom in lieu for nom in HIPPODROMES_MASQUES):
+        return True
+    pays = hippo.get("pays") or {}
+    code_pays = (pays.get("code") if isinstance(pays, dict) else str(pays)) or ""
+    if code_pays.upper() in PAYS_MASQUES:
+        return True
+    return False
+
 async def fetch_reunions_async() -> list:
     url       = f"{BASE_URL_PROG}/{today()}{BASE_URL_PARAMS}"
     data      = await fetch_json_async(url)
     out       = []
     programme = data.get("programme") or {}
     for r in programme.get("reunions", []):
+        if _reunion_est_masquee(r):
+            continue
         # numOfficiel/numExterne ou hippodrome peuvent être présents mais valoir `null`
         # → utiliser "or" plutôt que get(default) pour éviter un crash sur NoneType
         num   = r.get("numOfficiel") or r.get("numExterne") or 0
@@ -268,6 +288,7 @@ async def fetch_courses_async(r_num: str) -> list:
             "id": str(num), "num": num,
             "label": f"C{num} — {label}",
             "heure": heure, "heureDepart": ts,
+            "partants": c.get("nombreDeclaresPartants"),
         })
     return out
 
