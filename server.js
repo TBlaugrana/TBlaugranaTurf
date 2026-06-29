@@ -1,17 +1,5 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════
-//  TBlaugranaTurf — Serveur
-//
-//  Sert l'interface (public/index.html) et fait office de
-//  proxy vers l'API PMU. Le CORS est une protection imposée
-//  par le NAVIGATEUR : une requête serveur → serveur n'y est
-//  pas soumise. C'est pourquoi --disable-web-security (utilisé
-//  en local via le .bat) n'est plus nécessaire ici : le
-//  navigateur ne parle qu'à CE serveur, qui lui-même relaie
-//  la requête vers online.turfinfo.api.pmu.fr.
-// ═══════════════════════════════════════════════════════
-
 const express = require('express');
 const path = require('path');
 
@@ -20,9 +8,6 @@ const PORT = process.env.PORT || 3000;
 
 const PMU_UPSTREAM = 'https://online.turfinfo.api.pmu.fr/rest';
 
-// ── Proxy générique /pmu-api/* → online.turfinfo.api.pmu.fr/rest/* ──
-// Transmet le If-None-Match du client et renvoie l'ETag / 304 du serveur
-// PMU, pour conserver le mécanisme de cache utilisé par cotesLoop().
 app.get('/pmu-api/*', async (req, res) => {
   const upstreamPath = req.path.replace(/^\/pmu-api/, '');
   const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
@@ -40,14 +25,8 @@ app.get('/pmu-api/*', async (req, res) => {
     if (etag) res.set('ETag', etag);
     res.set('Cache-Control', 'no-store');
 
-    if (upstreamRes.status === 304) {
-      res.status(304).end();
-      return;
-    }
-    if (!upstreamRes.ok) {
-      res.status(upstreamRes.status).end();
-      return;
-    }
+    if (upstreamRes.status === 304) { res.status(304).end(); return; }
+    if (!upstreamRes.ok) { res.status(upstreamRes.status).end(); return; }
 
     const data = await upstreamRes.json();
     res.json(data);
@@ -57,7 +36,6 @@ app.get('/pmu-api/*', async (req, res) => {
   }
 });
 
-// ── Fichiers statiques (index.html, etc.) ──
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {
@@ -67,19 +45,14 @@ app.listen(PORT, () => {
 // ═══════════════════════════════════════════════════════
 //  ALERTES TELEGRAM AUTOMATIQUES (côté serveur)
 //
-//  Tourne en continu sur Railway, indépendamment du fait que
-//  le navigateur soit ouvert ou non. Reprend la même logique
-//  que le client (snapshot N s avant départ, puis détection de
-//  chute de cote) mais en tâche de fond côté serveur.
-//
-//  Variables d'environnement (à définir sur Railway) :
+//  Variables d'environnement (Railway) :
 //    TELEGRAM_BOT_TOKEN     token du bot (obligatoire)
-//    TELEGRAM_CHAT_IDS      chat id(s), séparés par des virgules (obligatoire)
-//    DROP_THRESHOLD         seuil de chute en %  (défaut 30)
+//    TELEGRAM_CHAT_IDS      chat id(s), séparés par virgules (obligatoire)
+//    DROP_THRESHOLD         seuil de chute en % (défaut 30)
 //    SNAP_SECS              snapshot N s avant départ (défaut 180)
-//    POST_DEPART_WINDOW     fenêtre d'alerte après départ, en s (défaut 120)
-//    TG_MAX_COTE            cote finale max pour déclencher l'alerte (défaut : aucun filtre)
-//    AUTO_ALERT_INTERVAL_MS intervalle de polling en ms (défaut 5000)
+//    POST_DEPART_WINDOW     fenêtre après départ en s (défaut 120)
+//    TG_MAX_COTE            cote max pour alerte (défaut : aucun filtre)
+//    AUTO_ALERT_INTERVAL_MS intervalle polling en ms (défaut 1000)
 // ═══════════════════════════════════════════════════════
 
 const TG_TOKEN           = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -88,10 +61,9 @@ const DROP_THRESHOLD     = parseFloat(process.env.DROP_THRESHOLD) || 30;
 const SNAP_SECS          = parseInt(process.env.SNAP_SECS, 10) || 180;
 const POST_DEPART_WINDOW = parseInt(process.env.POST_DEPART_WINDOW, 10) || 120;
 const TG_MAX_COTE        = process.env.TG_MAX_COTE ? parseFloat(process.env.TG_MAX_COTE) : Infinity;
-const AUTO_ALERT_INTERVAL_MS = parseInt(process.env.AUTO_ALERT_INTERVAL_MS, 10) || 5000;
+const AUTO_ALERT_INTERVAL_MS = parseInt(process.env.AUTO_ALERT_INTERVAL_MS, 10) || 1000;
 
 function datePmuFmt(yyyymmdd) {
-  // YYYYMMDD → DDMMYYYY
   return yyyymmdd.slice(6, 8) + yyyymmdd.slice(4, 6) + yyyymmdd.slice(0, 4);
 }
 
@@ -101,7 +73,6 @@ function todayStr() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
 
-// État interne du moteur d'alertes
 const AE = {
   today: null,
   programme: [],
@@ -144,12 +115,33 @@ function pickRace() {
   return AE.programme.length ? AE.programme[AE.programme.length - 1] : null;
 }
 
+// ── Racing pattern : 2 requêtes en parallèle, on garde la plus rapide ──
 async function fetchParticipants(race) {
   const url = `${PMU_UPSTREAM}/client/7/programme/${datePmuFmt(AE.today)}/R${race.reunion}/C${race.course}/participants?specialisation=OFFLINE`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`participants HTTP ${r.status}`);
-  const data = await r.json();
-  return data?.participants || [];
+  const TIMEOUT_MS = 800;
+  const N = 2;
+
+  const controllers = Array.from({ length: N }, () => new AbortController());
+  const makeOne = (ctrl) => {
+    const id = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    return fetch(url, { signal: ctrl.signal, cache: 'no-store' })
+      .then(r => {
+        clearTimeout(id);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(d => d?.participants || [])
+      .catch(e => { clearTimeout(id); throw e; });
+  };
+
+  try {
+    const result = await Promise.any(controllers.map(c => makeOne(c)));
+    controllers.forEach(c => { try { c.abort(); } catch (_) {} });
+    return result;
+  } catch (e) {
+    controllers.forEach(c => { try { c.abort(); } catch (_) {} });
+    throw e;
+  }
 }
 
 function formatDelay(secsLeft) {
@@ -206,12 +198,11 @@ async function autoAlertTick() {
     const now = Date.now();
     const secsLeft = Math.round((race.depart - now) / 1000);
 
-    if (secsLeft > SNAP_SECS) return;            // trop tôt, pas encore dans la fenêtre
-    if (secsLeft < -POST_DEPART_WINDOW) return;   // course trop ancienne, on arrête
+    if (secsLeft > SNAP_SECS) return;
+    if (secsLeft < -POST_DEPART_WINDOW) return;
 
     const participants = await fetchParticipants(race);
 
-    // Snapshot : on mémorise les cotes au moment où l'on entre dans la fenêtre
     if (!AE.snapDone) {
       for (const p of participants) {
         if (p.statut === 'PARTANT' && p.dernierRapportDirect) {
@@ -223,7 +214,6 @@ async function autoAlertTick() {
       return;
     }
 
-    // Détection des chutes >= DROP_THRESHOLD %
     for (const p of participants) {
       if (p.statut !== 'PARTANT' || !p.dernierRapportDirect) continue;
       const snap = AE.snapCotes[p.numPmu];
