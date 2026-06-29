@@ -78,7 +78,7 @@ app.listen(PORT, () => {
 //    DROP_THRESHOLD         seuil de chute en %  (défaut 30)
 //    SNAP_SECS              snapshot N s avant départ (défaut 180)
 //    POST_DEPART_WINDOW     fenêtre d'alerte après départ, en s (défaut 120)
-//    TG_MAX_COTE            cote max (snap ET finale) pour déclencher l'alerte (défaut : aucun filtre)
+//    TG_MAX_COTE            cote max (snap ET finale) pour déclencher l'alerte (défaut : 10)
 //    AUTO_ALERT_INTERVAL_MS intervalle de polling en ms (défaut 5000)
 // ═══════════════════════════════════════════════════════
 
@@ -87,7 +87,7 @@ const TG_CHAT_IDS        = (process.env.TELEGRAM_CHAT_IDS || '').split(',').map(
 const DROP_THRESHOLD     = parseFloat(process.env.DROP_THRESHOLD) || 30;
 const SNAP_SECS          = parseInt(process.env.SNAP_SECS, 10) || 180;
 const POST_DEPART_WINDOW = parseInt(process.env.POST_DEPART_WINDOW, 10) || 120;
-const TG_MAX_COTE        = process.env.TG_MAX_COTE ? parseFloat(process.env.TG_MAX_COTE) : Infinity;
+const TG_MAX_COTE        = process.env.TG_MAX_COTE ? parseFloat(process.env.TG_MAX_COTE) : 10;
 const AUTO_ALERT_INTERVAL_MS = parseInt(process.env.AUTO_ALERT_INTERVAL_MS, 10) || 5000;
 
 function datePmuFmt(yyyymmdd) {
@@ -233,8 +233,8 @@ async function autoAlertTick() {
       const drop = (snap - cur) / snap * 100;
       if (drop < DROP_THRESHOLD || AE.alerted.has(p.numPmu)) continue;
 
-      // ── Filtre cote max : on ignore si la cote snapshot OU la cote finale dépasse TG_MAX_COTE ──
-      if (snap > TG_MAX_COTE || cur > TG_MAX_COTE) continue;
+      // ── Filtre cote max : on ignore si la cote FINALE dépasse TG_MAX_COTE ──
+      if (cur > TG_MAX_COTE) continue;
 
       AE.alerted.add(p.numPmu);
       console.log(`[AutoAlert] 🔥 ${p.nom} ${snap} → ${cur} (-${drop.toFixed(1)}%)`);
