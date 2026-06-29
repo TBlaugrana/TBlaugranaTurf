@@ -1,0 +1,1995 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TBlaugranaTurf</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230b0f1a'/%3E%3Ctext y='50' x='5' font-size='50'%3E🐎%3C/text%3E%3C/svg%3E">
+<style>
+/* ── VARIABLES ─────────────────── */
+:root {
+  --bg:        #f0f4fb;
+  --surface:   #ffffff;
+  --surface2:  #f7f9fe;
+  --surface3:  #eef2fa;
+  --border:    #d0d9ef;
+  --border2:   #b8c5e0;
+  --accent:    #1a6fd4;
+  --accent2:   #1558b0;
+  --green:     #0d9e5c;
+  --red:       #d93250;
+  --yellow:    #c48a00;
+  --text:      #1a2540;
+  --text2:     #4a5f88;
+  --text3:     #8899bb;
+  --r:         6px;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-ui:   'Rajdhani', sans-serif;
+}
+
+/* ── RESET ─────────────────────── */
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; overflow:hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 17px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-image:
+    radial-gradient(ellipse at 50% 0%, rgba(26,111,212,.06) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% 100%, rgba(13,158,92,.04) 0%, transparent 50%);
+}
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* ── HEADER ──────────────────── */
+#header {
+  background: linear-gradient(180deg, #dae6f8 0%, #eef3fc 100%);
+  border-bottom: 1px solid rgba(26,111,212,.2);
+  padding: 16px 14px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  position: relative;
+  gap: 8px;
+  box-shadow: 0 2px 18px rgba(26,111,212,.12);
+}
+#header::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(26,111,212,.4) 50%, transparent 100%);
+}
+.logo-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.logo-horse { font-size: 38px; line-height: 1; filter: drop-shadow(0 0 6px rgba(26,111,212,.4)); }
+.logo {
+  font-family: var(--font-ui);
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 5px;
+  background: linear-gradient(135deg, #1a6fd4 0%, #0d9e5c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 6px rgba(26,111,212,.15));
+}
+#status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green), 0 0 16px rgba(31,212,126,.3);
+  animation: pulse 2.5s infinite;
+  flex-shrink: 0;
+}
+#status-dot.err { background:var(--red); box-shadow:0 0 6px var(--red); animation:none; }
+
+#settings-btn {
+  background: rgba(61,142,240,.1);
+  border: 1px solid rgba(61,142,240,.25);
+  color: var(--text2);
+  font-size: 16px;
+  width: 30px; height: 30px;
+  border-radius: var(--r);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 8px;
+  transition: all .15s;
+}
+#settings-btn:hover { background:var(--accent); border-color:var(--accent); color:#fff; box-shadow:0 0 10px rgba(61,142,240,.4); }
+
+/* ── PROGRESS BAR ──────────────── */
+#prog-bar { height: 2px; background: rgba(255,255,255,.03); flex-shrink:0; }
+#prog-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--green));
+  transition: width .8s linear;
+  width: 0%;
+  box-shadow: 0 0 6px rgba(61,142,240,.6);
+}
+
+/* ── RACE BAR ──────────────────── */
+#race-bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 6px rgba(26,111,212,.06);
+}
+.nav-btn {
+  background: rgba(61,142,240,.1);
+  border: 1px solid rgba(61,142,240,.2);
+  color: var(--text2);
+  font-size: 22px;
+  width: 34px; height: 34px;
+  border-radius: var(--r);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.nav-btn:hover { background:var(--accent); border-color:var(--accent); color:#fff; box-shadow:0 0 12px rgba(61,142,240,.4); }
+.nav-btn:disabled { opacity:.2; cursor:not-allowed; pointer-events:none; }
+
+#race-info { flex:1; min-width:0; }
+#race-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent2);
+  letter-spacing: 2px;
+  margin-bottom: 1px;
+}
+#race-name {
+  font-size: 21px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: .3px;
+  line-height: 1.2;
+}
+#race-sub {
+  font-size: 15px;
+  color: var(--text3);
+  margin-top: 1px;
+  letter-spacing: .3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#race-counter {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text3);
+  margin-top: 1px;
+}
+
+#cd-wrap { flex-shrink:0; text-align:right; }
+#cd-label {
+  font-size: 13px;
+  color: var(--text3);
+  letter-spacing: 2px;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+#countdown {
+  font-family: var(--font-mono);
+  font-size: 56px;
+  font-weight: 700;
+  color: var(--green);
+  line-height: 1;
+  letter-spacing: -1px;
+  text-shadow: 0 0 10px rgba(13,158,92,.2);
+}
+#countdown.warn { color:var(--yellow); text-shadow:0 0 12px rgba(245,192,64,.3); }
+#countdown.crit { color:var(--red); animation:blink .45s infinite; text-shadow:0 0 12px rgba(240,68,85,.4); }
+#snap-badge {
+  display: none;
+  background: rgba(245,192,64,.1);
+  border: 1px solid rgba(245,192,64,.4);
+  color: var(--yellow);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+  margin-top: 3px;
+  text-align: center;
+  animation: glow 2s infinite;
+}
+
+/* ── FILTER BAR ─────────────────── */
+#filter-bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+#filter-row1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#filter-row2 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.flabel {
+  font-size: 12px;
+  color: var(--text3);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+#max-cote {
+  background: rgba(61,142,240,.08);
+  border: 1px solid rgba(61,142,240,.22);
+  color: var(--accent2);
+  font-family: var(--font-mono);
+  font-size: 17px;
+  padding: 4px 6px;
+  width: 58px;
+  border-radius: var(--r);
+  outline: none;
+  transition: all .15s;
+}
+#max-cote:focus { border-color:var(--accent); box-shadow:0 0 0 2px rgba(61,142,240,.12); }
+#drop-pct-input {
+  background: rgba(31,212,126,.08);
+  border: 1px solid rgba(31,212,126,.22);
+  color: var(--green);
+  font-family: var(--font-mono);
+  font-size: 17px;
+  padding: 4px 6px;
+  width: 54px;
+  border-radius: var(--r);
+  outline: none;
+  transition: all .15s;
+}
+#drop-pct-input:focus { border-color:var(--green); box-shadow:0 0 0 2px rgba(31,212,126,.12); }
+.vsep { width:1px; height:16px; background:var(--border); flex-shrink:0; }
+#ts {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text3);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+#audio-btn, #tg-btn {
+  flex: 1;
+  background: none;
+  border: 1px solid var(--border2);
+  color: var(--text2);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  padding: 6px 0;
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: all .15s;
+  text-align: center;
+  white-space: nowrap;
+}
+#audio-btn.on { color:var(--green); border-color:rgba(31,212,126,.4); background:rgba(31,212,126,.07); }
+#tg-btn.on    { color:#4fbde8; border-color:rgba(79,189,232,.4); background:rgba(79,189,232,.07); }
+#tg-test-btn {
+  background: none;
+  border: 1px solid var(--border2);
+  color: var(--text3);
+  font-size: 17px;
+  padding: 5px 9px;
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+#tg-test-btn:hover { border-color:rgba(79,189,232,.5); color:#4fbde8; }
+
+/* ── FOOTER BAR (statut de rafraîchissement) ── */
+#footer-bar {
+  background: var(--surface2);
+  border-top: 1px solid var(--border);
+  padding: 5px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── TABLE HEADER ───────────────── */
+#th {
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border2);
+  padding: 9px 14px;
+  display: grid;
+  grid-template-columns: 32px 1fr 58px 48px 92px;
+  gap: 4px;
+  font-size: 13px;
+  letter-spacing: 1.5px;
+  color: var(--text3);
+  text-transform: uppercase;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+/* ── PARTICIPANTS ───────────────── */
+#participants {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.horse {
+  display: grid;
+  grid-template-columns: 32px 1fr 58px 48px 92px;
+  gap: 4px;
+  align-items: center;
+  padding: 14px 14px;
+  border-bottom: 1px solid rgba(30,37,64,.9);
+  transition: background .12s;
+  position: relative;
+}
+.horse::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0; width: 0;
+  background: var(--accent);
+  transition: width .15s;
+}
+.horse:hover { background: rgba(61,142,240,.05); }
+.horse:hover::before { width: 2px; }
+.horse.np { opacity:.22; text-decoration:line-through; }
+.horse.fav .hname { font-weight: 700; }
+
+.hnum {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  color: var(--text3);
+  text-align: center;
+  font-weight: 700;
+  background: rgba(255,255,255,.04);
+  border-radius: 3px;
+  padding: 3px 0;
+  line-height: 1.4;
+}
+.hname {
+  font-size: 20px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: .2px;
+  line-height: 1.3;
+  min-width: 0;
+}
+.cdirect {
+  font-family: var(--font-mono);
+  font-size: 25px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: -0.5px;
+}
+.csnap {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  text-align: center;
+  color: var(--text3);
+}
+.cdrop {
+  font-family: var(--font-mono);
+  font-size: 23px;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  padding: 4px 2px;
+  border-radius: 5px;
+  box-sizing: border-box;
+}
+.cdrop.hot  { color:var(--green); background:rgba(31,212,126,.14); box-shadow:0 0 10px rgba(31,212,126,.25); text-shadow:0 0 8px rgba(31,212,126,.4); }
+.cdrop.warm { color:var(--yellow); background:rgba(245,192,64,.14); }
+.cdrop.low  { color:var(--text2); background:rgba(255,255,255,.04); }
+.cdrop.up   { color:var(--red); background:rgba(240,68,85,.12); font-size: 23px; }
+.horse.alerted { background:rgba(31,212,126,.05); }
+.horse.alerted::before { width:3px; background:var(--green); }
+
+/* ── ALERTS — masqué ──────────────────────── */
+#alerts { display: none !important; }
+
+/* ── LOADING ─────────────────────── */
+#loading {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  gap: 14px;
+  background-image: radial-gradient(ellipse at 50% 40%, rgba(26,111,212,.08) 0%, transparent 60%);
+}
+.spinner {
+  width: 34px; height: 34px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+.ltxt {
+  font-family: var(--font-ui);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 5px;
+  background: linear-gradient(135deg, #1a6fd4, #0d9e5c);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.lsub { font-family:var(--font-mono); font-size: 11px; color:var(--text3); letter-spacing:2px; text-transform:uppercase; }
+
+/* ── ANIMATIONS ──────────────────── */
+@keyframes pulse   { 0%,100%{ opacity:1; transform:scale(1) } 50%{ opacity:.3; transform:scale(.8) } }
+@keyframes blink   { 0%,100%{ opacity:1 } 50%{ opacity:.1 } }
+@keyframes spin    { to{ transform:rotate(360deg) } }
+@keyframes slideIn { from{ transform:translateX(-5px);opacity:0 } to{ transform:translateX(0);opacity:1 } }
+@keyframes rowFlash{ 0%{ background:rgba(31,212,126,.22) } 100%{ background:transparent } }
+@keyframes glow    { 0%,100%{ box-shadow:0 0 4px rgba(245,192,64,.2) } 50%{ box-shadow:0 0 10px rgba(245,192,64,.5) } }
+.flash { animation: rowFlash 1s ease forwards; }
+
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { opacity:.3; }
+
+/* ── COUNTDOWN MINI (filter bar) ── */
+#cd-wrap-mini {
+  display: flex;
+  align-items: center;
+  margin-left: 8px;
+}
+.cd-mini {
+  font-family: var(--font-mono);
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--green);
+  letter-spacing: -1px;
+  line-height: 1;
+  text-shadow: 0 0 10px rgba(31,212,126,.3);
+}
+.cd-mini.warn { color: var(--yellow); text-shadow: 0 0 10px rgba(245,192,64,.3); }
+.cd-mini.crit { color: var(--red); animation: blink .45s infinite; text-shadow: 0 0 10px rgba(240,68,85,.4); }
+.cd-mini.elapsed { color: var(--text2); text-shadow: none; font-size: 22px; }
+
+/* ── SETTINGS OVERLAY ───────────── */
+#settings-overlay {
+  position: fixed; inset: 0;
+  background: rgba(5,7,14,.78);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 300;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s;
+}
+#settings-overlay.show { opacity: 1; pointer-events: auto; }
+#settings-panel {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-bottom: none;
+  border-radius: 14px 14px 0 0;
+  width: 100%;
+  max-width: 460px;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -8px 40px rgba(0,0,0,.6);
+  transform: translateY(14px);
+  transition: transform .18s;
+}
+#settings-overlay.show #settings-panel { transform: translateY(0); }
+#settings-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: .5px;
+  flex-shrink: 0;
+}
+#settings-close {
+  background: none;
+  border: none;
+  color: var(--text2);
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 6px;
+}
+#settings-close:hover { color:var(--text); }
+#settings-body { overflow-y: auto; padding: 14px 16px 4px; flex: 1; }
+.settings-section { margin-bottom: 20px; }
+.settings-section-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--accent2);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-field { display:flex; flex-direction:column; gap:5px; margin-bottom:12px; }
+.settings-field label { font-size:13px; color:var(--text2); letter-spacing:.3px; line-height:1.4; }
+.settings-field .hint { color:var(--text3); font-size:11px; font-weight:400; }
+.settings-field input[type=text],
+.settings-field input[type=number] {
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  padding: 9px 10px;
+  border-radius: var(--r);
+  outline: none;
+  transition: border-color .15s;
+}
+.settings-field input:focus { border-color: var(--accent); box-shadow:0 0 0 2px rgba(61,142,240,.12); }
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.settings-toggle span { font-size:14px; color:var(--text); }
+.switch { position:relative; width:42px; height:24px; flex-shrink:0; display:inline-block; }
+.switch input { opacity:0; width:0; height:0; }
+.switch .slider {
+  position:absolute; inset:0;
+  background:var(--border2);
+  border-radius:24px;
+  cursor:pointer;
+  transition:.2s;
+}
+.switch .slider::before {
+  content:'';
+  position:absolute;
+  width:18px; height:18px;
+  left:3px; top:3px;
+  background:#fff;
+  border-radius:50%;
+  transition:.2s;
+}
+.switch input:checked + .slider { background: var(--green); }
+.switch input:checked + .slider::before { transform: translateX(18px); }
+#settings-test-btn {
+  width: 100%;
+  background: rgba(79,189,232,.08);
+  border: 1px solid rgba(79,189,232,.3);
+  color: #4fbde8;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 14px;
+  padding: 9px 0;
+  border-radius: var(--r);
+  cursor: pointer;
+  margin-top: 2px;
+  transition: all .15s;
+}
+#settings-test-btn:hover { background:rgba(79,189,232,.16); }
+#settings-footer {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#settings-reset, #settings-save {
+  flex: 1;
+  padding: 11px 0;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: .3px;
+  transition: all .15s;
+}
+#settings-reset { background:none; border:1px solid var(--border2); color:var(--text2); }
+#settings-reset:hover { border-color:var(--red); color:var(--red); }
+#settings-save { background: linear-gradient(135deg, var(--accent), var(--green)); border:none; color:#fff; }
+#settings-save:hover { filter:brightness(1.1); box-shadow:0 0 14px rgba(61,142,240,.4); }
+</style>
+</head>
+<body>
+
+<!-- LOADING SCREEN -->
+<div id="loading">
+  <div class="spinner"></div>
+  <span class="ltxt">TBlaugranaTurf</span>
+  <span id="load-sub" class="lsub">CHARGEMENT DU PROGRAMME...</span>
+</div>
+
+<!-- HEADER -->
+<div id="header">
+  <div class="logo-wrap">
+    <span class="logo-horse">🐎</span>
+    <span class="logo">TBlaugranaTurf</span>
+    <span class="logo-horse" style="transform:scaleX(-1);display:inline-block">🐎</span>
+  </div>
+  <div id="status-dot"></div>
+</div>
+
+<!-- PROGRESS BAR -->
+<div id="prog-bar"><div id="prog-fill"></div></div>
+
+<!-- RACE BAR -->
+<div id="race-bar">
+  <button class="nav-btn" id="btn-prev" disabled title="Course précédente">‹</button>
+  <div id="race-info">
+    <div id="race-code">—</div>
+    <div id="race-name">—</div>
+    <div id="race-sub"></div>
+    <div id="race-counter"></div>
+  </div>
+  <div id="cd-wrap" style="display:none">
+    <div id="cd-label">DÉPART</div>
+    <div id="countdown">--:--</div>
+    <div id="snap-badge">📸 SNAP</div>
+  </div>
+  <button class="nav-btn" id="btn-next" disabled title="Course suivante">›</button>
+</div>
+
+<!-- Inputs cachés — valeurs toujours lues par le JS -->
+<input type="number" id="max-cote"       value="10" min="1" max="999" style="display:none">
+<input type="number" id="drop-pct-input" value="25" min="1" max="99"  style="display:none">
+<button id="audio-btn"   class="on" style="display:none">🔔 SON</button>
+<button id="tg-btn"      class="on" style="display:none">✈️ TELEGRAM</button>
+<button id="tg-test-btn"             style="display:none">🧪</button>
+
+<!-- FILTER BAR — décompte + bouton réglages -->
+<div id="filter-bar">
+  <div id="filter-row1">
+    <button id="settings-btn" title="Réglages" style="margin-right:auto">⚙️</button>
+    <div style="display:flex;flex-direction:column;align-items:center;flex:1">
+      <span class="flabel" id="cd-label-mini">DÉPART DANS</span>
+      <div id="cd-wrap-mini" style="display:flex;align-items:center;gap:6px">
+        <span id="countdown-mini" class="cd-mini">--:--</span>
+        <span id="snap-badge-mini" style="display:none;background:rgba(245,192,64,.1);border:1px solid rgba(245,192,64,.4);color:var(--yellow);font-size:11px;font-family:var(--font-mono);padding:2px 6px;border-radius:3px;letter-spacing:1px;animation:glow 2s infinite">📸 SNAP</span>
+      </div>
+    </div>
+    <div style="width:30px;margin-left:auto"></div>
+  </div>
+</div>
+
+<!-- TABLE HEADER -->
+<div id="th">
+  <span>#</span>
+  <span>CHEVAL</span>
+  <span style="text-align:center">COTE</span>
+  <span style="text-align:center">SNAP</span>
+  <span style="text-align:center;color:var(--green);font-size:14px;letter-spacing:1.5px;text-shadow:0 0 6px rgba(31,212,126,.3)">CHUTE</span>
+</div>
+
+<!-- PARTICIPANTS LIST -->
+<div id="participants"></div>
+
+<!-- FOOTER BAR — statut de rafraîchissement, tout en bas -->
+<div id="footer-bar">
+  <span id="ts">—</span>
+</div>
+
+<!-- ALERTS PANEL -->
+<div id="alerts">
+  <div id="alerts-hd">
+    <span>📡 ALERTES</span>
+    <span id="abadge" class="abadge">0</span>
+    <button id="clr-btn" onclick="clearAlerts()">EFFACER</button>
+  </div>
+  <div id="alerts-list"></div>
+</div>
+
+<!-- SETTINGS OVERLAY -->
+<div id="settings-overlay">
+  <div id="settings-panel">
+    <div id="settings-hd">
+      <span>⚙️ RÉGLAGES</span>
+      <button id="settings-close" title="Fermer">✕</button>
+    </div>
+    <div id="settings-body">
+
+      <div class="settings-section">
+        <div class="settings-section-title">📉 Détection des chutes</div>
+        <div class="settings-field">
+          <label for="set-drop-pct">Seuil de chute minimum (%)</label>
+          <input type="number" id="set-drop-pct" min="1" max="99" step="1">
+        </div>
+        <div class="settings-field">
+          <label for="set-max-cote">Cote finale max affichée</label>
+          <input type="number" id="set-max-cote" min="1" max="999" step="0.5">
+        </div>
+        <div class="settings-field">
+          <label for="set-snap-secs">Fenêtre de surveillance avant départ (secondes)<br><span class="hint">Snapshot auto + alertes actives dans cette fenêtre</span></label>
+          <input type="number" id="set-snap-secs" min="10" max="600" step="10">
+        </div>
+        <div class="settings-toggle">
+          <span>🙈 Masquer les cotes en hausse</span>
+          <label class="switch">
+            <input type="checkbox" id="set-hide-rising">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="settings-toggle">
+          <span>🚫 Masquer les non-partants</span>
+          <label class="switch">
+            <input type="checkbox" id="set-hide-np">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">✈️ Telegram</div>
+        <div class="settings-toggle">
+          <span>Notifications Telegram</span>
+          <label class="switch">
+            <input type="checkbox" id="set-tg-on">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="settings-field">
+          <label for="set-tg-token">Bot Token</label>
+          <input type="text" id="set-tg-token" placeholder="123456789:ABC-DEF...">
+        </div>
+        <div class="settings-field">
+          <label for="set-tg-chatids">Chat ID(s) <span class="hint">séparés par des virgules</span></label>
+          <input type="text" id="set-tg-chatids" placeholder="111111111, 222222222">
+        </div>
+        <div class="settings-field">
+          <label for="set-tg-max-cote">Cote finale max pour notif Telegram</label>
+          <input type="number" id="set-tg-max-cote" min="1" max="999" step="0.5">
+        </div>
+        <button id="settings-test-btn" type="button">🧪 Tester la connexion Telegram</button>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">🔧 Divers</div>
+        <div class="settings-toggle">
+          <span>🔔 Son des alertes</span>
+          <label class="switch">
+            <input type="checkbox" id="set-audio-on">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="settings-field">
+          <label for="set-max-alerts">Nombre d'alertes affichées</label>
+          <input type="number" id="set-max-alerts" min="1" max="20" step="1">
+        </div>
+        <div class="settings-field">
+          <label for="set-prog-refresh">Rafraîchissement du programme (secondes)</label>
+          <input type="number" id="set-prog-refresh" min="30" max="600" step="10">
+        </div>
+      </div>
+
+    </div>
+    <div id="settings-footer">
+      <button id="settings-reset" type="button">↩️ Réinitialiser</button>
+      <button id="settings-save" type="button">✓ Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════
+//  TBlaugranaTurf — Bot de surveillance des cotes PMU
+//  Les appels à l'API PMU passent par le proxy /pmu-api
+//  (servi par server.js) pour contourner le CORS sans
+//  avoir besoin de désactiver la sécurité du navigateur.
+// ═══════════════════════════════════════════════════════
+
+// ── CONFIG ─────────────────────────────────────────────
+const PMU_BASE_PROG  = '/pmu-api/client/61';
+const PMU_BASE_PARTS = '/pmu-api/client/7';
+
+const CFG = {
+  progRefreshSecs:  120,   // intervalle de rafraîchissement du programme (secondes)
+  snapSecs:         180,   // snapshot automatique N secondes avant le départ
+  fetchTimeoutMs:   1500,  // timeout d'une requête API (ms)
+  parallelFetches:  1,     // nb de requêtes en parallèle (racing pattern)
+                           // (passé de 2 à 1 : avec une latence déjà basse (~15-20ms),
+                           //  le racing pattern n'apporte presque rien et double
+                           //  inutilement la charge envoyée à l'API PMU, ce qui
+                           //  semble déclencher un rate-limit périodique côté serveur)
+  progCacheTtlMs:   90000, // durée de vie du cache programme JS (ms)
+  maxAlerts:        3,     // nb maximum d'alertes conservées (les 3 dernières)
+
+  // ── BASCULE AUTO BASÉE SUR LE GEL RÉEL DES COTES ───────
+  // (et non plus sur un délai fixe après l'heure PRÉVUE de départ,
+  //  qui bug si la course démarre en retard suite à un incident)
+  oddsStableMs:      15000,  // durée sans changement de cotes pour confirmer le gel (ms)
+  switchAfterFreezeMs: 240000, // bascule N ms après le gel confirmé (ms) = 4 min
+  maxWaitAfterDepartMs: 1200000, // sécurité anti-blocage : si 20 min après l'heure prévue
+                                 // le gel n'est toujours pas détecté (course annulée, bug API…),
+                                 // on bascule de force pour ne pas rester coincé
+
+  // ── TELEGRAM ──────────────────────────────────────────
+  // Notifications envoyées quand un cheval chute de DROP_PCT% ou plus,
+  // UNIQUEMENT dans les snapSecs secondes avant le départ,
+  // et seulement si la cote FINALE est <= tgMaxCote (peu importe la cote snap).
+  // À renseigner via le panneau Réglages (⚙️) — stocké uniquement dans
+  // le navigateur (localStorage), jamais dans le code source.
+  tgToken:    '',
+  tgChatIds:  [],
+  tgMaxCote:  10,    // cote finale maximale pour déclencher la notif Telegram
+};
+
+// ── ÉTAT GLOBAL ─────────────────────────────────────────
+let S = {
+  today:       '',
+  programme:   [],
+  curIdx:      -1,
+  curRaceIdx:  -1,   // index de la course "active" en mode AUTO (avance uniquement quand le gel réel est confirmé)
+  manualIdx:   -1,   // -1 = mode AUTO
+  lastOddsChangeAt: null, // timestamp du dernier changement de cotes réellement observé
+  oddsFrozenAt:     null, // timestamp où le gel des cotes a été confirmé (null = pas encore figées)
+  participants: [],
+  snapCotes:   {},
+  snapDone:    false,
+  alertedDrop: new Set(),
+  alertCount:  0,
+  audioOn:     true,
+  tgOn:        true,  // notifications Telegram activées
+  hideRising:  false, // masque les chevaux dont la cote augmente (chute négative)
+  hideNonPartants: true, // masque les chevaux déclarés non-partants
+  tick:        0,
+  lastFetchMs: 0,
+};
+
+// ── PARAMÈTRES PAR DÉFAUT (pour le bouton "Réinitialiser") ──
+const DEFAULTS = {
+  dropPct:         25,
+  maxCote:         10,
+  snapSecs:        180,
+  progRefreshSecs: 120,
+  maxAlerts:       3,
+  tgMaxCote:       10,
+  tgToken:         '',
+  tgChatIds:       [],
+  audioOn:         true,
+  tgOn:            true,
+  hideRising:      false,
+  hideNonPartants: true,
+};
+
+// ── PARAMÈTRES SAUVEGARDÉS (localStorage) ──────────────
+// Persiste les réglages d'une session à l'autre, sur cette machine.
+const SETTINGS_KEY = 'tblaugranaturf_settings_v1';
+
+function loadSavedSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s.dropPct != null)            document.getElementById('drop-pct-input').value = s.dropPct;
+    if (s.maxCote != null)            document.getElementById('max-cote').value       = s.maxCote;
+    if (s.snapSecs != null)           CFG.snapSecs         = s.snapSecs;
+    if (s.progRefreshSecs != null)    CFG.progRefreshSecs  = s.progRefreshSecs;
+    if (s.maxAlerts != null)          CFG.maxAlerts        = s.maxAlerts;
+    if (s.tgMaxCote != null)          CFG.tgMaxCote        = s.tgMaxCote;
+    if (s.tgToken)                    CFG.tgToken          = s.tgToken;
+    if (Array.isArray(s.tgChatIds) && s.tgChatIds.length) CFG.tgChatIds = s.tgChatIds;
+    if (typeof s.audioOn === 'boolean') S.audioOn = s.audioOn;
+    if (typeof s.tgOn === 'boolean')    S.tgOn    = s.tgOn;
+    if (typeof s.hideRising === 'boolean') S.hideRising = s.hideRising;
+    if (typeof s.hideNonPartants === 'boolean') S.hideNonPartants = s.hideNonPartants;
+  } catch (_) {}
+}
+loadSavedSettings();
+
+// ── CACHE PROGRAMME ─────────────────────────────────────
+const _progCache = {};  // { dateStr -> { ts, data } }
+
+// ── GÉNÉRATION FETCH (pour invalider cotesLoop à la volée) ──
+let _fetchGeneration = 0;
+
+// ── LATENCE + TIMEOUT ADAPTATIF ─────────────────────────
+// On garde un historique glissant des 10 derniers temps de réponse.
+// Le timeout de la prochaine requête = max(300ms, avg*3).
+// Avantage : si l'API répond en 150ms en moyenne, on abandonne à 450ms
+// au lieu d'attendre 1500ms — les requêtes mortes libèrent la boucle 3× plus vite.
+let _latencyHistory = [];
+function addLatency(ms) {
+  _latencyHistory.push(ms);
+  if (_latencyHistory.length > 10) _latencyHistory.shift();
+}
+function avgLatency() {
+  if (!_latencyHistory.length) return 0;
+  return Math.round(_latencyHistory.reduce((a, b) => a + b, 0) / _latencyHistory.length);
+}
+function adaptiveTimeout() {
+  const avg = avgLatency();
+  // Pas assez d'historique → timeout par défaut
+  if (_latencyHistory.length < 3) return CFG.fetchTimeoutMs;
+  // avg * 4, mais borné entre 600ms et CFG.fetchTimeoutMs
+  // (plancher relevé de 300 → 600ms : 300ms coupait des requêtes valides
+  //  dès qu'un simple pic de latence réseau dépassait ce seuil, provoquant
+  //  des "TIMEOUT" alors que l'API aurait répondu correctement juste après)
+  return Math.min(CFG.fetchTimeoutMs, Math.max(600, avg * 4));
+}
+
+// ── HASH LÉGER POUR DÉTECTER LES DONNÉES IDENTIQUES ─────
+// Évite de re-parser + re-render si l'API n'a rien changé.
+// On compare juste les cotes de chaque partant : rapide et suffisant.
+let _lastPartsHash = '';
+function hashParts(parts) {
+  // Concatène numPmu:rapport pour tous les partants → string unique
+  return parts
+    .filter(p => p.statut === 'PARTANT' && p.dernierRapportDirect)
+    .map(p => `${p.numPmu}:${p.dernierRapportDirect.rapport}`)
+    .join(',');
+}
+
+// ── CACHE ETAG ───────────────────────────────────────────
+// Stocke le dernier ETag reçu par URL.
+// Si l'API renvoie 304 Not Modified → pas de body à transférer → ~3× plus rapide.
+// Note : fonctionne seulement si l'API PMU envoie des headers ETag/Cache-Control.
+const _etags = {};  // { url -> etag }
+
+// ── UTILS GÉNÉRAUX ──────────────────────────────────────
+const pad = n => String(n).padStart(2, '0');
+function dateStr(d) {
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+}
+function timeNow() {
+  const n = new Date();
+  return `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
+}
+function fmtCd(s) {
+  if (s < 0) {
+    const elapsed = Math.abs(s);
+    const m = Math.floor(elapsed / 60);
+    const sec = elapsed % 60;
+    return m > 0 ? `+${m}m${pad(sec)}s` : `+${sec}s`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0 ? `${h}h${pad(m)}` : `${pad(m)}:${pad(sec)}`;
+}
+function getMaxCote()  { const v = parseFloat(document.getElementById('max-cote').value);       return isNaN(v) ? 9999 : v; }
+function getDropPct()  { const v = parseFloat(document.getElementById('drop-pct-input').value); return isNaN(v) ? 25   : v; }
+
+// Tronque le nom du cheval à N caractères pour ne plus décaler les colonnes
+// (le nom complet reste consultable au survol via l'attribut title)
+const HORSE_NAME_MAX_LEN = 12;
+function truncName(nom) {
+  if (!nom) return '';
+  return nom.length > HORSE_NAME_MAX_LEN
+    ? nom.slice(0, HORSE_NAME_MAX_LEN) + '…'
+    : nom;
+}
+
+// ── AUDIO ───────────────────────────────────────────────
+// Un seul AudioContext réutilisé pour éviter le blocage autoplay navigateur.
+let _ac = null;
+function getAC() {
+  if (!_ac) _ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (_ac.state === 'suspended') _ac.resume();
+  return _ac;
+}
+document.addEventListener('click', () => { try { getAC(); } catch (_) {} }, { once: true });
+
+function beep(freq = 880, dur = 150, type = 'sine') {
+  if (!S.audioOn) return;
+  try {
+    const ctx = getAC();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(.22, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + dur / 1000);
+    osc.start();
+    osc.stop(ctx.currentTime + dur / 1000);
+  } catch (_) {}
+}
+
+function alertBeep() {
+  beep(1100, 80);
+  setTimeout(() => beep(880, 100), 130);
+  setTimeout(() => beep(1300, 220), 290);
+}
+
+function snapBeep() {
+  if (!S.audioOn) return;
+  try {
+    const ctx = getAC();
+    const t = ctx.currentTime;
+    const notes = [[660, 0], [880, .2], [1100, .42]];
+    notes.forEach(([freq, delay]) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'square'; o.frequency.value = freq;
+      g.gain.setValueAtTime(.18, t + delay);
+      g.gain.exponentialRampToValueAtTime(.001, t + delay + .28);
+      o.start(t + delay); o.stop(t + delay + .3);
+    });
+  } catch (_) {}
+}
+
+// ── FORMAT DATE PMU ─────────────────────────────────────
+function datePmu(yyyymmdd) {
+  // YYYYMMDD → DDMMYYYY  ex: 20260601 → 01062026
+  return yyyymmdd.slice(6, 8) + yyyymmdd.slice(4, 6) + yyyymmdd.slice(0, 4);
+}
+
+// ── FETCH AVEC TIMEOUT ──────────────────────────────────
+async function fetchWithTimeout(url, opts = {}, ms = CFG.fetchTimeoutMs) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { ...opts, signal: ctrl.signal });
+    clearTimeout(id);
+    return r;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+}
+
+// ── CHARGEMENT PROGRAMME ────────────────────────────────
+// ── DÉTECTION DES ANNULATIONS ────────────────────────────
+// L'API PMU expose un champ "statut" (sur la course et/ou la réunion)
+// qui passe à une valeur du type "COURSE_ANNULEE" / "REUNION_ANNULEE"
+// en cas d'annulation. On teste de façon souple (contient "ANNULE")
+// pour rester robuste si la valeur exacte varie selon les cas.
+// ⚠️ Non vérifié en conditions réelles (accès direct à l'API PMU
+// impossible depuis l'environnement où ce code a été écrit) — à
+// confirmer sur une vraie annulation. Si ça ne filtre pas, dis-le moi :
+// il suffit d'ouvrir les DevTools (F12 → Network) sur une réunion
+// annulée et de regarder le nom exact du champ dans la réponse JSON.
+function isAnnulee(obj) {
+  const s = obj?.statut || obj?.statutCourse || obj?.statutReunion || '';
+  return typeof s === 'string' && s.toUpperCase().includes('ANNULE');
+}
+
+async function loadProg() {
+  // IMPORTANT : ne PAS réécrire S.today si elle est déjà définie.
+  // Avant, loadProg() forçait S.today = aujourd'hui à chaque appel, y
+  // compris lors du rafraîchissement périodique (toutes les progRefreshSecs).
+  // Si le programme du jour était vide et qu'on avait basculé sur le
+  // programme de demain (voir boot()), ce rafraîchissement écrasait S.today
+  // et revenait charger la date d'aujourd'hui (vide) → "le programme ne se
+  // met plus à jour" / mauvaise journée affichée.
+  if (!S.today) S.today = dateStr(new Date());
+  setLoadSub('CHARGEMENT DU PROGRAMME...');
+  try {
+    const cached = _progCache[S.today];
+    let data;
+    if (cached && (Date.now() - cached.ts) < CFG.progCacheTtlMs) {
+      data = cached.data;
+    } else {
+      const url = `${PMU_BASE_PROG}/programme/${datePmu(S.today)}?specialisation=OFFLINE`;
+      const r = await fetchWithTimeout(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      data = await r.json();
+      _progCache[S.today] = { ts: Date.now(), data };
+    }
+
+    const races = [];
+    const reunions = data?.programme?.reunions || [];
+    let nbAnnulees = 0;
+    for (const ru of reunions) {
+      if (isAnnulee(ru)) { nbAnnulees += (ru.courses || []).length; continue; }
+      const hip = ru.hippodrome?.libelleCourt || ru.hippodrome?.libelleLong || `R${ru.numOfficiel}`;
+      for (const co of (ru.courses || [])) {
+        if (isAnnulee(co)) { nbAnnulees++; continue; }
+        races.push({
+          reunion: ru.numOfficiel,
+          course:  co.numOrdre,
+          depart:  co.heureDepart,
+          libelle: co.libelle || co.libelleCourt || `Course ${co.numOrdre}`,
+          hip,
+          disc: co.discipline || co.specialite || '',
+        });
+      }
+    }
+
+    S.programme = races.sort((a, b) => a.depart - b.depart);
+    S.lastProg = Date.now();
+    setStatus(true);
+
+    if (nbAnnulees > 0) addAlert('prog', '🚫', `${nbAnnulees} course(s) annulée(s) masquée(s)`);
+
+    if (races.length > 0) {
+      addAlert('prog', '📋', `Programme : ${races.length} courses dans ${reunions.length} réunions`);
+      return true;
+    }
+    return false;
+  } catch (e) {
+    addAlert('prog', '⚠️', `Programme : ${e.message}`);
+    setStatus(false);
+    return false;
+  }
+}
+
+// ── CHARGEMENT PARTICIPANTS (fallback mono-requête) ─────
+async function loadParts(reunion, course) {
+  const url = `${PMU_BASE_PARTS}/programme/${datePmu(S.today)}/R${reunion}/C${course}/participants?specialisation=OFFLINE`;
+  const r = await fetchWithTimeout(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  return data.participants || [];
+}
+
+// ── TROUVER LA COURSE DE DÉPART (sélection initiale / fallback uniquement) ─
+// N'intervient plus dans la bascule en continu (voir autoSwitch + gel réel
+// des cotes ci-dessous) : sert seulement à choisir une course de départ
+// raisonnable au boot, ou si l'index courant devient invalide (ex: reload
+// du programme qui change sa taille).
+function findNext() {
+  const now = Date.now();
+  // Première course non encore partie depuis +5min
+  for (let i = 0; i < S.programme.length; i++) {
+    if (S.programme[i].depart >= now - 300_000) return i;
+  }
+  return Math.max(0, S.programme.length - 1);
+}
+
+function effectiveIdx() {
+  if (S.manualIdx >= 0) return S.manualIdx;
+  if (S.curRaceIdx < 0 || S.curRaceIdx >= S.programme.length) {
+    S.curRaceIdx = findNext();
+  }
+  return S.curRaceIdx;
+}
+function isAuto()       { return S.manualIdx < 0; }
+
+// ── CHANGEMENT DE COURSE ────────────────────────────────
+function onRaceChange() {
+  S.snapDone = false;
+  S.snapCotes = {};
+  S.alertedDrop.clear();
+  S.participants = [];
+  S.lastOddsChangeAt = Date.now(); // reset : on repart d'une cote "vue à l'instant"
+  S.oddsFrozenAt = null;            // pas encore figées pour cette nouvelle course
+  document.getElementById('snap-badge').style.display = 'none';
+  document.getElementById('participants').innerHTML = '';
+  document.getElementById('prog-fill').style.width = '0%';
+  // Invalide la boucle courante et en lance une nouvelle
+  cotesLoop();
+}
+
+// ── SNAPSHOT ────────────────────────────────────────────
+function doSnapshot() {
+  if (S.snapDone) return;
+  S.snapDone = true;
+  S.snapCotes = {};
+  for (const p of S.participants) {
+    if (p.statut === 'PARTANT' && p.dernierRapportDirect)
+      S.snapCotes[p.numPmu] = p.dernierRapportDirect.rapport;
+  }
+  S.alertedDrop.clear();
+  document.getElementById('snap-badge').style.display = 'block';
+  addAlert('snap', '📸', `SNAPSHOT — ${Object.keys(S.snapCotes).length} chevaux`);
+  snapBeep();
+  renderTable();
+}
+
+// ── TELEGRAM ─────────────────────────────────────────────
+// Envoie un message à tous les chat IDs configurés.
+// Conditions pour envoyer :
+//   - Telegram activé (S.tgOn)
+//   - snapDone = true (on est dans la fenêtre ou après snapshot)
+//   - Cote FINALE <= CFG.tgMaxCote  (peu importe la cote snap)
+//   - Chute >= DROP_PCT%
+async function sendTelegram(horse, snap, cur, dropPct, race, secsLeft) {
+  if (!S.tgOn) return;
+  if (!CFG.tgToken || !CFG.tgChatIds.length) return; // pas configuré (⚙️ Réglages)
+  const apiBase  = `https://api.telegram.org/bot${CFG.tgToken}/sendMessage`;
+  const raceLabel = `R${race.reunion}C${race.course}`;
+  const hip       = race.hip ? `${race.hip} — ` : '';
+  const secsStr   = secsLeft > 0 ? `⏱ ${secsLeft}s avant départ` : '🚨 DÉPART IMMINENT';
+  const text =
+    `🚨 *ALERTE ${raceLabel}* 🚨\n` +
+    `🐎 ${horse.numPmu} — *${horse.nom}*\n` +
+    `${snap} ➡️ ${cur} (−${dropPct.toFixed(0)}%)\n` +
+    `${hip}${race.libelle}\n` +
+    `${secsStr}`;
+
+  addAlert('info', '✈️', `Envoi Telegram → ${CFG.tgChatIds.join(', ')}…`);
+
+  let allOk = true;
+  for (const chatId of CFG.tgChatIds) {
+    try {
+      const r = await fetch(apiBase, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
+      });
+      const json = await r.json();
+      if (!r.ok || !json.ok) {
+        addAlert('info', '❌', `TG erreur chat ${chatId} : ${json.description || r.status}`);
+        allOk = false;
+      }
+    } catch (e) {
+      addAlert('info', '❌', `TG exception chat ${chatId} : ${e.message}`);
+      allOk = false;
+    }
+  }
+  if (allOk) addAlert('info', '✅', `Telegram envoyé — ${horse.nom}`);
+}
+
+// ── DÉTECTION DES CHUTES ────────────────────────────────
+function checkDrops() {
+  if (!S.snapDone) return;
+  const minPct   = getDropPct();
+  const maxUI    = getMaxCote();      // filtre d'affichage UI
+  const maxTg    = CFG.tgMaxCote;    // filtre Telegram (cote finale uniquement)
+  const race     = S.programme[effectiveIdx()];
+  const secsLeft = Math.round((race.depart - Date.now()) / 1000);
+
+  // Alertes dans les 30s avant le départ ET jusqu'à 2 min après
+  if (secsLeft > CFG.snapSecs) return;   // trop tôt, snapshot pas encore pris
+  if (secsLeft < -120) return;           // plus de 2 min après départ → stop
+
+  for (const p of S.participants) {
+    if (p.statut !== 'PARTANT' || !p.dernierRapportDirect) continue;
+    const snap = S.snapCotes[p.numPmu];
+    const cur  = p.dernierRapportDirect.rapport;
+    if (!snap) continue;
+
+    const drop = (snap - cur) / snap * 100;
+    if (drop < minPct || S.alertedDrop.has(p.numPmu)) continue;
+
+    // Filtre UI : cote finale <= max affiché
+    if (cur > maxUI) continue;
+
+    S.alertedDrop.add(p.numPmu);
+    addAlert('drop', '🔥', `${p.nom} — ${snap} → ${cur} (−${drop.toFixed(0)}%)`);
+    alertBeep();
+
+    const row = document.getElementById(`row-${p.numPmu}`);
+    if (row) { row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 900); }
+
+    // Telegram : cote finale <= tgMaxCote
+    if (cur <= maxTg) {
+      sendTelegram(p, snap, cur, drop, race, secsLeft);
+    }
+  }
+}
+
+// ── RENDU TABLE (mise à jour différentielle) ────────────
+function renderTable() {
+  const maxCote  = getMaxCote();
+  const minPct   = getDropPct();
+  const container = document.getElementById('participants');
+
+  const getDrop = p => {
+    const snap = S.snapCotes[p.numPmu];
+    const cd   = p.dernierRapportDirect?.rapport;
+    return (snap != null && cd != null) ? (snap - cd) / snap * 100 : -9999;
+  };
+
+  const sorted = [...S.participants].sort((a, b) => {
+    const da = getDrop(a), db = getDrop(b);
+    if (da !== -9999 && db !== -9999) return db - da;
+    if (da !== -9999) return -1;
+    if (db !== -9999) return 1;
+    return (a.dernierRapportDirect?.rapport ?? 9999) - (b.dernierRapportDirect?.rapport ?? 9999);
+  });
+
+  const visible = sorted.filter(p => {
+    if (S.hideNonPartants && p.statut === 'NON_PARTANT') return false;
+    if ((p.dernierRapportDirect?.rapport ?? 9999) > maxCote) return false;
+    if (S.hideRising) {
+      const snap = S.snapCotes[p.numPmu];
+      const cd   = p.dernierRapportDirect?.rapport;
+      // N'appliquer le filtre qu'après le snap ET si la cote a réellement augmenté
+      if (snap != null && cd != null && cd > snap) return false;
+    }
+    return true;
+  });
+  const visIds  = new Set(visible.map(p => `row-${p.numPmu}`));
+
+  // Retire les lignes disparues
+  for (const row of [...container.children]) {
+    if (!visIds.has(row.id)) row.remove();
+  }
+
+  for (let i = 0; i < visible.length; i++) {
+    const p   = visible[i];
+    const np  = p.statut === 'NON_PARTANT';
+    const fav = p.dernierRapportDirect?.favoris;
+    const cd  = p.dernierRapportDirect?.rapport ?? '—';
+    const snap = S.snapCotes[p.numPmu];
+    const cs  = snap ?? '—';
+
+    // Calcul cote couleur + variation
+    let dropTxt = '', dropClass = '';
+    if (snap != null && cd !== '—') {
+      const dr = (snap - cd) / snap * 100;
+      if (dr > 0) {
+        dropTxt = `−${dr.toFixed(1)}%`;
+        if      (dr >= minPct) { dropClass = 'hot'; }
+        else if (dr >= 10)     { dropClass = 'warm'; }
+        else                   { dropClass = 'low'; }
+      } else if (dr < 0) {
+        dropTxt = `+${Math.abs(dr).toFixed(1)}%`;
+        dropClass = 'up';
+      } else {
+        dropTxt = '0%';
+      }
+    }
+
+    let row = document.getElementById(`row-${p.numPmu}`);
+    if (!row) {
+      row = document.createElement('div');
+      row.id = `row-${p.numPmu}`;
+      row.className = `horse${np ? ' np' : ''}${fav ? ' fav' : ''}`;
+      row.innerHTML =
+        `<span class="hnum">${p.numPmu}</span>` +
+        `<div><div class="hname" title="${p.nom}">${truncName(p.nom)}</div></div>` +
+        `<span class="cdirect">${cd}</span>` +
+        `<span class="csnap">${cs}</span>` +
+        `<span class="cdrop ${dropClass}">${dropTxt || '—'}</span>`;
+      container.appendChild(row);
+    } else {
+      // Mise à jour différentielle — ne touche que les cellules modifiées
+      const cells   = row.children;
+      const celCD   = cells[2];
+      const celSnap = cells[3];
+      const celDrop = cells[4];
+
+      const cdStr = String(cd);
+      if (celCD.textContent !== cdStr) celCD.textContent = cdStr;
+
+      const csStr = String(cs);
+      if (celSnap.textContent !== csStr) celSnap.textContent = csStr;
+
+      const dt = dropTxt || '—';
+      if (celDrop.textContent !== dt) celDrop.textContent = dt;
+      const dc = `cdrop ${dropClass}`;
+      if (celDrop.className !== dc) celDrop.className = dc;
+    }
+
+    // Highlight persistant si déjà alerté
+    row.classList.toggle('alerted', S.alertedDrop.has(p.numPmu));
+
+    // Reorder si nécessaire
+    if (container.children[i] !== row) container.insertBefore(row, container.children[i] || null);
+  }
+}
+
+// ── ALERTES ─────────────────────────────────────────────
+function addAlert(type, icon, msg) {
+  const list = document.getElementById('alerts-list');
+  const item = document.createElement('div');
+  item.className = `aitem ${type}`;
+  item.innerHTML = `<span class="atime">${timeNow()}</span><span class="aicon">${icon}</span><span class="amsg">${msg}</span>`;
+  list.prepend(item);
+  // Purge les vieilles alertes
+  while (list.children.length > CFG.maxAlerts) list.removeChild(list.lastChild);
+  if (type !== 'info' && type !== 'prog') {
+    S.alertCount++;
+    const badge = document.getElementById('abadge');
+    badge.textContent = S.alertCount;
+    badge.style.display = 'inline';
+  }
+}
+function clearAlerts() {
+  document.getElementById('alerts-list').innerHTML = '';
+  S.alertCount = 0;
+  document.getElementById('abadge').style.display = 'none';
+}
+
+// ── STATUS DOT ──────────────────────────────────────────
+function setStatus(ok) {
+  document.getElementById('status-dot').className = ok ? '' : 'err';
+}
+function setLoadSub(t) {
+  const e = document.getElementById('load-sub');
+  if (e) e.textContent = t;
+}
+
+// ── NAVIGATION ──────────────────────────────────────────
+function updateNav() {
+  const idx = effectiveIdx();
+  const len = S.programme.length;
+  document.getElementById('btn-prev').disabled = idx <= 0;
+  document.getElementById('btn-next').disabled = idx >= len - 1;
+}
+
+document.getElementById('btn-prev').onclick = () => {
+  const i = effectiveIdx();
+  if (i > 0) { S.manualIdx = i - 1; onRaceChange(); updateNav(); }
+};
+document.getElementById('btn-next').onclick = () => {
+  const i = effectiveIdx();
+  if (i < S.programme.length - 1) { S.manualIdx = i + 1; onRaceChange(); updateNav(); }
+};
+document.getElementById('audio-btn').onclick = () => {
+  S.audioOn = !S.audioOn;
+  try { getAC(); } catch (_) {}
+  const btn = document.getElementById('audio-btn');
+  btn.className = S.audioOn ? 'on' : '';
+  btn.textContent = S.audioOn ? '🔔 SON' : '🔕 MUET';
+  if (S.audioOn) beep(880, 120);
+};
+document.getElementById('tg-btn').onclick = () => {
+  S.tgOn = !S.tgOn;
+  const btn = document.getElementById('tg-btn');
+  btn.className = S.tgOn ? 'on' : '';
+  btn.textContent = S.tgOn ? '✈️ TG' : '✈️ TG OFF';
+  addAlert('info', S.tgOn ? '✈️' : '🔕', `Telegram ${S.tgOn ? 'activé' : 'désactivé'}`);
+};
+document.getElementById('tg-test-btn').onclick = async () => {
+  addAlert('info', '🧪', 'Test Telegram en cours...');
+  const apiBase = `https://api.telegram.org/bot${CFG.tgToken}/sendMessage`;
+  const text = `🧪 *Test TBlaugranaTurf*\nConnexion Telegram OK ✅\n${new Date().toLocaleTimeString('fr-FR')}`;
+  for (const chatId of CFG.tgChatIds) {
+    try {
+      const r    = await fetch(apiBase, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
+      });
+      const json = await r.json();
+      if (r.ok && json.ok) {
+        addAlert('info', '✅', `Test OK → chat ${chatId}`);
+      } else {
+        addAlert('info', '❌', `Test ÉCHEC chat ${chatId} : ${json.description || r.status}`);
+      }
+    } catch (e) {
+      addAlert('info', '❌', `Test EXCEPTION chat ${chatId} : ${e.message}`);
+    }
+  }
+};
+
+// ── PANNEAU DE RÉGLAGES ──────────────────────────────────
+function clampNum(v, min, max, def) {
+  const n = parseFloat(v);
+  if (isNaN(n)) return def;
+  return Math.min(max, Math.max(min, n));
+}
+
+// Envoie un message de test à un token/chatIds donnés (utilisé par le
+// panneau de réglages, sur les valeurs du formulaire — même non enregistrées).
+async function testTelegram(token, chatIds) {
+  if (!token) { addAlert('info', '⚠️', 'Aucun token Telegram renseigné'); return; }
+  if (!chatIds.length) { addAlert('info', '⚠️', 'Aucun chat ID renseigné'); return; }
+  addAlert('info', '🧪', 'Test Telegram en cours...');
+  const apiBase = `https://api.telegram.org/bot${token}/sendMessage`;
+  const text = `🧪 *Test TBlaugranaTurf*\nConnexion Telegram OK ✅\n${new Date().toLocaleTimeString('fr-FR')}`;
+  for (const chatId of chatIds) {
+    try {
+      const r = await fetch(apiBase, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
+      });
+      const json = await r.json();
+      if (r.ok && json.ok) {
+        addAlert('info', '✅', `Test OK → chat ${chatId}`);
+      } else {
+        addAlert('info', '❌', `Test ÉCHEC chat ${chatId} : ${json.description || r.status}`);
+      }
+    } catch (e) {
+      addAlert('info', '❌', `Test EXCEPTION chat ${chatId} : ${e.message}`);
+    }
+  }
+}
+
+function populateSettingsForm() {
+  document.getElementById('set-drop-pct').value     = getDropPct();
+  document.getElementById('set-max-cote').value      = getMaxCote();
+  document.getElementById('set-snap-secs').value     = CFG.snapSecs;
+  document.getElementById('set-prog-refresh').value  = CFG.progRefreshSecs;
+  document.getElementById('set-max-alerts').value    = CFG.maxAlerts;
+  document.getElementById('set-tg-max-cote').value   = CFG.tgMaxCote;
+  document.getElementById('set-tg-token').value      = CFG.tgToken;
+  document.getElementById('set-tg-chatids').value    = CFG.tgChatIds.join(', ');
+  document.getElementById('set-audio-on').checked    = S.audioOn;
+  document.getElementById('set-tg-on').checked       = S.tgOn;
+  document.getElementById('set-hide-rising').checked = S.hideRising;
+  document.getElementById('set-hide-np').checked     = S.hideNonPartants;
+}
+
+function gatherSettingsForm() {
+  return {
+    dropPct:         clampNum(document.getElementById('set-drop-pct').value, 1, 99, DEFAULTS.dropPct),
+    maxCote:         clampNum(document.getElementById('set-max-cote').value, 1, 999, DEFAULTS.maxCote),
+    snapSecs:        clampNum(document.getElementById('set-snap-secs').value, 10, 600, DEFAULTS.snapSecs),
+    progRefreshSecs: clampNum(document.getElementById('set-prog-refresh').value, 30, 600, DEFAULTS.progRefreshSecs),
+    maxAlerts:       clampNum(document.getElementById('set-max-alerts').value, 1, 20, DEFAULTS.maxAlerts),
+    tgMaxCote:       clampNum(document.getElementById('set-tg-max-cote').value, 1, 999, DEFAULTS.tgMaxCote),
+    tgToken:         document.getElementById('set-tg-token').value.trim() || DEFAULTS.tgToken,
+    tgChatIds:       document.getElementById('set-tg-chatids').value.split(',').map(s => s.trim()).filter(Boolean),
+    audioOn:         document.getElementById('set-audio-on').checked,
+    tgOn:            document.getElementById('set-tg-on').checked,
+    hideRising:      document.getElementById('set-hide-rising').checked,
+    hideNonPartants: document.getElementById('set-hide-np').checked,
+  };
+}
+
+function openSettings() {
+  populateSettingsForm();
+  document.getElementById('settings-overlay').classList.add('show');
+}
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('show');
+}
+
+document.getElementById('settings-btn').onclick   = openSettings;
+document.getElementById('settings-close').onclick = closeSettings;
+document.getElementById('settings-overlay').onclick = (e) => {
+  if (e.target.id === 'settings-overlay') closeSettings();
+};
+
+document.getElementById('settings-test-btn').onclick = () => {
+  const token   = document.getElementById('set-tg-token').value.trim() || CFG.tgToken;
+  const chatIds = document.getElementById('set-tg-chatids').value.split(',').map(s => s.trim()).filter(Boolean);
+  testTelegram(token, chatIds);
+};
+
+document.getElementById('settings-save').onclick = () => {
+  const s = gatherSettingsForm();
+
+  document.getElementById('drop-pct-input').value = s.dropPct;
+  document.getElementById('max-cote').value        = s.maxCote;
+  CFG.snapSecs        = s.snapSecs;
+  CFG.progRefreshSecs = s.progRefreshSecs;
+  CFG.maxAlerts       = s.maxAlerts;
+  CFG.tgMaxCote       = s.tgMaxCote;
+  CFG.tgToken         = s.tgToken;
+  CFG.tgChatIds       = s.tgChatIds.length ? s.tgChatIds : DEFAULTS.tgChatIds;
+  S.audioOn           = s.audioOn;
+  S.tgOn              = s.tgOn;
+  S.hideRising        = s.hideRising;
+  S.hideNonPartants   = s.hideNonPartants;
+
+  // Garde les boutons SON / TELEGRAM (cachés) synchronisés
+  const ab = document.getElementById('audio-btn');
+  ab.className   = S.audioOn ? 'on' : '';
+  ab.textContent = S.audioOn ? '🔔 SON' : '🔕 MUET';
+  const tb = document.getElementById('tg-btn');
+  tb.className   = S.tgOn ? 'on' : '';
+  tb.textContent = S.tgOn ? '✈️ TG' : '✈️ TG OFF';
+
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (_) {}
+
+  if (S.participants.length) renderTable();
+
+  addAlert('info', '⚙️', 'Réglages enregistrés');
+  closeSettings();
+};
+
+document.getElementById('settings-reset').onclick = () => {
+  document.getElementById('drop-pct-input').value = DEFAULTS.dropPct;
+  document.getElementById('max-cote').value        = DEFAULTS.maxCote;
+  CFG.snapSecs        = DEFAULTS.snapSecs;
+  CFG.progRefreshSecs = DEFAULTS.progRefreshSecs;
+  CFG.maxAlerts       = DEFAULTS.maxAlerts;
+  CFG.tgMaxCote       = DEFAULTS.tgMaxCote;
+  CFG.tgToken         = DEFAULTS.tgToken;
+  CFG.tgChatIds       = [...DEFAULTS.tgChatIds];
+  S.audioOn           = DEFAULTS.audioOn;
+  S.tgOn              = DEFAULTS.tgOn;
+  S.hideRising        = DEFAULTS.hideRising;
+  S.hideNonPartants   = DEFAULTS.hideNonPartants;
+
+  const ab = document.getElementById('audio-btn');
+  ab.className   = S.audioOn ? 'on' : '';
+  ab.textContent = S.audioOn ? '🔔 SON' : '🔕 MUET';
+  const tb = document.getElementById('tg-btn');
+  tb.className   = S.tgOn ? 'on' : '';
+  tb.textContent = S.tgOn ? '✈️ TG' : '✈️ TG OFF';
+
+  try { localStorage.removeItem(SETTINGS_KEY); } catch (_) {}
+
+  if (S.participants.length) renderTable();
+
+  populateSettingsForm();
+  addAlert('info', '↩️', 'Réglages réinitialisés');
+};
+
+// ── AUTO-SWITCH ─────────────────────────────────────────
+// Bascule sur la course suivante UNIQUEMENT quand le gel réel des cotes
+// a été confirmé (cf. cotesLoop) depuis CFG.switchAfterFreezeMs (4 min).
+// Sécurité anti-blocage : si rien n'est détecté CFG.maxWaitAfterDepartMs
+// après l'heure prévue (course annulée, données manquantes, bug API…),
+// on bascule de force pour ne pas rester coincé indéfiniment.
+function autoSwitch() {
+  if (!isAuto()) return;
+  if (S.programme.length === 0) return;
+
+  // Pas encore de course "active" en auto, ou index devenu invalide
+  // (ex: le programme a changé de taille) → on en choisit une nouvelle
+  // et on repart sur un suivi de gel propre pour cette course.
+  if (S.curRaceIdx < 0 || S.curRaceIdx >= S.programme.length) {
+    S.curRaceIdx = findNext();
+    onRaceChange();
+    return;
+  }
+
+  // Dernière course du programme : rien après, on ne bascule plus.
+  if (S.curRaceIdx >= S.programme.length - 1) return;
+
+  const race = S.programme[S.curRaceIdx];
+  const now  = Date.now();
+
+  let shouldSwitch = false;
+  if (S.oddsFrozenAt !== null) {
+    shouldSwitch = (now - S.oddsFrozenAt) >= CFG.switchAfterFreezeMs;
+  } else if ((now - race.depart) >= CFG.maxWaitAfterDepartMs) {
+    // Sécurité : gel jamais détecté trop longtemps après l'heure prévue.
+    shouldSwitch = true;
+    addAlert('info', '⚠️', 'Gel des cotes non détecté — bascule forcée (sécurité)');
+  }
+
+  if (shouldSwitch) {
+    S.curRaceIdx++;
+    onRaceChange();
+  }
+}
+
+// ── TICK SECONDAIRE (UI + programme) ────────────────────
+async function tick() {
+  S.tick++;
+  if (S.programme.length === 0) return;
+
+  autoSwitch();
+  const idx  = effectiveIdx();
+  S.curIdx   = idx;
+  const race = S.programme[idx];
+  const secsLeft = Math.round((race.depart - Date.now()) / 1000);
+
+  // Mise à jour UI course
+  document.getElementById('race-code').textContent    = `R${race.reunion} · C${race.course}`;
+  document.getElementById('race-name').textContent    = `${race.hip ? race.hip + ' — ' : ''}${race.libelle}`;
+  document.getElementById('race-sub').textContent     = race.disc;
+  document.getElementById('race-counter').textContent = `${idx + 1} / ${S.programme.length}`;
+
+  // Countdown (race bar original)
+  const cd = document.getElementById('countdown');
+  cd.textContent = fmtCd(secsLeft);
+  cd.className = secsLeft < 0 ? '' : secsLeft <= 30 ? 'crit' : secsLeft <= 120 ? 'warn' : '';
+
+  // Countdown mini (filter bar)
+  const cdMini = document.getElementById('countdown-mini');
+  const cdLabel = document.getElementById('cd-label-mini');
+  if (cdMini) {
+    cdMini.textContent = fmtCd(secsLeft);
+    cdMini.className = 'cd-mini' + (secsLeft < 0 ? ' elapsed' : secsLeft <= 30 ? ' crit' : secsLeft <= 120 ? ' warn' : '');
+  }
+  if (cdLabel) cdLabel.textContent = secsLeft < 0 ? 'PARTI DEPUIS' : 'DÉPART DANS';
+  const snapMini = document.getElementById('snap-badge-mini');
+  if (snapMini) snapMini.style.display = S.snapDone ? 'inline' : 'none';
+
+  // Progress bar (sur 3600s avant départ)
+  const pct = Math.max(0, Math.min(100, (1 - Math.max(0, secsLeft) / 3600) * 100));
+  document.getElementById('prog-fill').style.width = pct + '%';
+
+  // Rafraîchissement programme (invalide le cache JS)
+  if (S.tick % CFG.progRefreshSecs === 0) {
+    // Passage à minuit / nouveau jour réel : si on avait basculé sur le
+    // programme d'un jour précédent (ex: hier, faute de courses ce jour-là)
+    // et que la vraie date du calendrier a maintenant avancé jusqu'à ou
+    // au-delà de S.today, on revient sur "aujourd'hui" pour réessayer.
+    const realToday = dateStr(new Date());
+    if (S.today && realToday > S.today) S.today = realToday;
+
+    delete _progCache[S.today];
+    const prevLen = S.programme.length;
+    await loadProg();
+    if (S.programme.length !== prevLen) updateNav();
+  }
+}
+
+// ── FETCH PARTICIPANTS AVEC ETAG ─────────────────────────
+// Envoie If-None-Match si on a déjà un ETag pour cette URL.
+// Si l'API répond 304 → données inchangées, on retourne null.
+// Si l'API répond 200 → on stocke le nouvel ETag et on retourne les participants.
+async function fetchPartsWithEtag(url, timeoutMs) {
+  const ctrl    = new AbortController();
+  const timerId = setTimeout(() => ctrl.abort(), timeoutMs);
+  const headers = {};
+  if (_etags[url]) headers['If-None-Match'] = _etags[url];
+
+  try {
+    const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal, headers });
+    clearTimeout(timerId);
+
+    if (r.status === 304) return null;  // données identiques → pas de re-render
+    if (!r.ok) {
+      const err = new Error(`HTTP ${r.status}`);
+      err.httpStatus = r.status;
+      throw err;
+    }
+
+    const etag = r.headers.get('ETag');
+    if (etag) _etags[url] = etag;
+
+    const data = await r.json();
+    return data.participants || [];
+  } catch (e) {
+    clearTimeout(timerId);
+    if (e.name === 'AbortError') e.isTimeout = true;
+    throw e;
+  }
+}
+
+// ── BOUCLE COTES — RYTHME FIXE 1s + RACING 2 REQ + RETRY SILENCIEUX ─
+//
+//  L'utilisateur veut un rafraîchissement fiable toutes les 1 seconde.
+//  Avec une seule requête par cycle, la latence affichée est devenue
+//  systématiquement ~300-400ms (latence réelle d'une requête simple à
+//  l'API PMU) au lieu des ~15-20ms observés avant. Ces 15-20ms n'étaient
+//  pas la latence réelle : c'était le MINIMUM de 2 requêtes lancées en
+//  parallèle (racing pattern), dont on gardait la plus rapide des deux.
+//
+//  On réintroduit donc 2 requêtes en parallèle par cycle pour retrouver
+//  cette vitesse, mais SANS revenir à l'ancien problème (pipeline continu
+//  sans pause → rate-limit périodique) :
+//   1. 2 requêtes identiques en parallèle (Promise.any) → la plus rapide
+//      des deux gagne, l'autre est annulée. Charge ×2 par cycle, mais
+//      UN SEUL cycle par seconde (pas de pipeline continu).
+//   2. Timeout généreux et fixe de 1200ms par requête.
+//   3. Si les 2 requêtes échouent, on retente le tout UNE fois avant
+//      d'afficher quoi que ce soit en rouge.
+//   4. Le cycle complet est suivi d'une pause qui complète jusqu'à
+//      1000ms, pour caler le rafraîchissement sur 1s pile.
+
+async function cotesLoop() {
+  const generation = ++_fetchGeneration;
+  _lastPartsHash = '';  // reset hash à chaque nouvelle course
+
+  const CYCLE_MS   = 1000;  // rythme cible : 1 rafraîchissement par seconde
+  const TIMEOUT_MS = 1200;  // timeout généreux par requête
+  const N_RACE     = 2;     // nb de requêtes en parallèle (racing pattern)
+
+  // ── Lance N requêtes identiques en parallèle, garde la 1ère valide ──
+  async function raceRequests(url, timeoutMs, n) {
+    const controllers = Array.from({ length: n }, () => new AbortController());
+    const makeOne = (ctrl) => {
+      const id = setTimeout(() => ctrl.abort(), timeoutMs);
+      const headers = {};
+      if (_etags[url]) headers['If-None-Match'] = _etags[url];
+      return fetch(url, { cache: 'no-store', signal: ctrl.signal, headers })
+        .then(r => {
+          clearTimeout(id);
+          if (r.status === 304) return null;
+          if (!r.ok) {
+            const err = new Error(`HTTP ${r.status}`);
+            err.httpStatus = r.status;
+            throw err;
+          }
+          const etag = r.headers.get('ETag');
+          if (etag) _etags[url] = etag;
+          return r.json().then(d => d.participants || []);
+        })
+        .catch(e => {
+          clearTimeout(id);
+          if (e.name === 'AbortError') e.isTimeout = true;
+          throw e;
+        });
+    };
+    try {
+      const result = await Promise.any(controllers.map(c => makeOne(c)));
+      controllers.forEach(c => { try { c.abort(); } catch (_) {} });
+      return result;
+    } catch (e) {
+      controllers.forEach(c => { try { c.abort(); } catch (_) {} });
+      if (e instanceof AggregateError && e.errors && e.errors.length) {
+        const withStatus  = e.errors.find(x => x.httpStatus);
+        const withTimeout = e.errors.find(x => x.isTimeout);
+        throw (withStatus || withTimeout || e.errors[0]);
+      }
+      throw e;
+    }
+  }
+
+  while (true) {
+    if (_fetchGeneration !== generation) return;
+
+    if (S.programme.length === 0) {
+      await new Promise(r => setTimeout(r, 200));
+      continue;
+    }
+
+    const cycleStart = performance.now();
+    const race = S.programme[effectiveIdx()];
+    const url  = `${PMU_BASE_PARTS}/programme/${datePmu(S.today)}/R${race.reunion}/C${race.course}/participants?specialisation=OFFLINE`;
+
+    let parts = null;
+    let lastErr = null;
+    let ms = 0;
+
+    // ── Essai 1 (2 requêtes en parallèle), puis 1 retry silencieux ──
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const t0 = performance.now();
+      try {
+        parts = await raceRequests(url, TIMEOUT_MS, N_RACE);
+        ms = Math.round(performance.now() - t0);
+        lastErr = null;
+        break;  // succès, on sort de la boucle de retry
+      } catch (e) {
+        ms = Math.round(performance.now() - t0);
+        lastErr = e;
+        // pas de pause entre essai 1 et essai 2 : on retente tout de suite
+      }
+    }
+
+    if (_fetchGeneration !== generation) return;
+
+    if (lastErr) {
+      // Les 2 essais ont échoué → on affiche enfin l'erreur
+      setStatus(false);
+      let label = 'ERR';
+      if (lastErr.httpStatus) label = `HTTP${lastErr.httpStatus}`;
+      else if (lastErr.isTimeout) label = 'TIMEOUT';
+      document.getElementById('ts').innerHTML =
+        `⚠ ${timeNow()} <span style="color:var(--red)">${ms}ms ${label}</span>`;
+    } else if (parts === null) {
+      // 304 Not Modified — données inchangées
+      document.getElementById('ts').innerHTML =
+        `= ${timeNow()} <span style="color:var(--text3);font-weight:600">${ms}ms 304</span>`;
+      // Détection du gel réel : pas de changement + heure prévue dépassée + stable depuis oddsStableMs
+      const now304 = Date.now();
+      if (S.oddsFrozenAt === null
+          && now304 >= race.depart
+          && (now304 - S.lastOddsChangeAt) >= CFG.oddsStableMs) {
+        S.oddsFrozenAt = now304;
+        addAlert('info', '🧊', `Cotes figées — bascule dans ${Math.round(CFG.switchAfterFreezeMs / 1000)}s`);
+      }
+    } else {
+      const newHash   = hashParts(parts);
+      const unchanged = (newHash === _lastPartsHash);
+      _lastPartsHash  = newHash;
+
+      // Détection du gel réel des cotes : on ne se fie plus à l'heure PRÉVUE
+      // (race.depart) seule, car une course retardée continue de voir ses
+      // cotes bouger après cette heure. On considère les cotes figées
+      // seulement quand elles n'ont PLUS changé depuis CFG.oddsStableMs ET
+      // que l'heure prévue est dépassée (sécurité : évite un faux gel détecté
+      // bien avant le départ sur une course avec peu de mises).
+      const nowFreeze = Date.now();
+      if (!unchanged) {
+        S.lastOddsChangeAt = nowFreeze; // les cotes ont vraiment bougé → pas (encore) figées
+      } else if (S.oddsFrozenAt === null
+                 && nowFreeze >= race.depart
+                 && (nowFreeze - S.lastOddsChangeAt) >= CFG.oddsStableMs) {
+        S.oddsFrozenAt = nowFreeze;
+        addAlert('info', '🧊', `Cotes figées — bascule dans ${Math.round(CFG.switchAfterFreezeMs / 1000)}s`);
+      }
+
+      addLatency(ms);
+      S.lastFetchMs = ms;
+      if (!unchanged) S.participants = parts;
+      setStatus(true);
+
+      const latColor = ms < 100 ? '#29c98a' : ms < 300 ? '#f5c842' : '#f0445a';
+      document.getElementById('ts').innerHTML =
+        `↻ ${timeNow()} <span style="color:${latColor};font-weight:600">${ms}ms</span>`;
+
+      const secsLeft = Math.round((race.depart - Date.now()) / 1000);
+      if (secsLeft <= CFG.snapSecs && secsLeft > 0 && !S.snapDone) doSnapshot();
+
+      if (!unchanged) {
+        checkDrops();
+        renderTable();
+      }
+    }
+
+    // ── Cale le cycle sur 1 seconde ──────────────────
+    const elapsed = performance.now() - cycleStart;
+    const wait = Math.max(0, CYCLE_MS - elapsed);
+    await new Promise(r => setTimeout(r, wait));
+  }
+}
+
+// ── DÉMARRAGE ────────────────────────────────────────────
+async function boot() {
+  document.getElementById('loading').style.display = 'flex';
+  S.today = dateStr(new Date());
+
+  let ok = await loadProg();
+
+  // Si pas de courses aujourd'hui, chercher les 7 prochains jours
+  if (!ok || S.programme.length === 0) {
+    const jours = ['dim', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam'];
+    setLoadSub('RECHERCHE DU PROCHAIN PROGRAMME...');
+
+    for (let offset = 1; offset <= 7; offset++) {
+      const d  = new Date();
+      d.setDate(d.getDate() + offset);
+      const ds = dateStr(d);
+      setLoadSub(`ESSAI ${ds.slice(6)}/${ds.slice(4, 6)}...`);
+      try {
+        const url  = `${PMU_BASE_PROG}/programme/${datePmu(ds)}?specialisation=OFFLINE`;
+        const r    = await fetchWithTimeout(url, { cache: 'no-store' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        const races = [];
+        for (const ru of (data?.programme?.reunions || [])) {
+          if (isAnnulee(ru)) continue;
+          const hip = ru.hippodrome?.libelleCourt || ru.hippodrome?.libelleLong || `R${ru.numOfficiel}`;
+          for (const co of (ru.courses || [])) {
+            if (isAnnulee(co)) continue;
+            races.push({
+              reunion: ru.numOfficiel,
+              course:  co.numOrdre,
+              depart:  co.heureDepart,
+              libelle: co.libelle || co.libelleCourt || `Course ${co.numOrdre}`,
+              hip,
+              disc: co.discipline || co.specialite || '',
+            });
+          }
+        }
+        if (races.length) {
+          S.today     = ds;
+          S.programme = races.sort((a, b) => a.depart - b.depart);
+          S.lastProg  = Date.now();
+          setStatus(true);
+          addAlert('prog', '📅', `Pas de courses aujourd'hui — ${jours[d.getDay()]} ${ds.slice(6)}/${ds.slice(4, 6)} : ${races.length} courses`);
+          break;
+        }
+      } catch (_) {}
+    }
+
+    if (S.programme.length === 0) {
+      addAlert('prog', '⚠️', 'Aucun programme trouvé. Vérifiez la connexion.');
+      setStatus(false);
+    }
+  }
+
+  if (S.programme.length > 0) {
+    S.curRaceIdx       = findNext();
+    S.curIdx           = S.curRaceIdx;
+    S.lastOddsChangeAt = Date.now();
+    S.oddsFrozenAt     = null;
+    updateNav();
+  }
+
+  document.getElementById('loading').style.display = 'none';
+  tick();
+  setInterval(tick, 1000);
+  cotesLoop();
+}
+
+boot();
+</script>
+</body>
+</html>
