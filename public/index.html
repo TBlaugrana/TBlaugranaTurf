@@ -666,6 +666,12 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
       </div>
     </div>
   </div>
+  <div id="filter-row2">
+    <button id="audio-btn" class="on">🔔 SON</button>
+    <button id="tg-btn" class="on">✈️ TG</button>
+    <span class="vsep"></span>
+    <button id="tg-test-btn" title="Tester Telegram">🧪</button>
+  </div>
 </div>
 
 <!-- TABLE HEADER -->
@@ -797,27 +803,6 @@ const DEFAULTS = {
 // ── PARAMÈTRES SAUVEGARDÉS (localStorage) ──────────────
 // Persiste les réglages d'une session à l'autre, sur cette machine.
 const SETTINGS_KEY = 'tblaugranaturf_settings_v1';
-
-function loadSavedSettings() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return;
-    const s = JSON.parse(raw);
-    if (s.dropPct != null)            document.getElementById('drop-pct-input').value = s.dropPct;
-    if (s.maxCote != null)            document.getElementById('max-cote').value       = s.maxCote;
-    if (s.snapSecs != null)           CFG.snapSecs         = s.snapSecs;
-    if (s.progRefreshSecs != null)    CFG.progRefreshSecs  = s.progRefreshSecs;
-    if (s.maxAlerts != null)          CFG.maxAlerts        = s.maxAlerts;
-    if (s.tgMaxCote != null)          CFG.tgMaxCote        = s.tgMaxCote;
-    if (s.tgToken)                    CFG.tgToken          = s.tgToken;
-    if (Array.isArray(s.tgChatIds) && s.tgChatIds.length) CFG.tgChatIds = s.tgChatIds;
-    if (typeof s.audioOn === 'boolean') S.audioOn = s.audioOn;
-    if (typeof s.tgOn === 'boolean')    S.tgOn    = s.tgOn;
-    if (typeof s.hideRising === 'boolean') S.hideRising = s.hideRising;
-    if (typeof s.hideNonPartants === 'boolean') S.hideNonPartants = s.hideNonPartants;
-  } catch (_) {}
-}
-loadSavedSettings();
 
 // ── CACHE PROGRAMME ─────────────────────────────────────
 const _progCache = {};  // { dateStr -> { ts, data } }
@@ -1379,154 +1364,6 @@ document.getElementById('tg-test-btn').onclick = async () => {
       addAlert('info', '❌', `Test EXCEPTION chat ${chatId} : ${e.message}`);
     }
   }
-};
-
-// ── PANNEAU DE RÉGLAGES ──────────────────────────────────
-function clampNum(v, min, max, def) {
-  const n = parseFloat(v);
-  if (isNaN(n)) return def;
-  return Math.min(max, Math.max(min, n));
-}
-
-// Envoie un message de test à un token/chatIds donnés (utilisé par le
-// panneau de réglages, sur les valeurs du formulaire — même non enregistrées).
-async function testTelegram(token, chatIds) {
-  if (!token) { addAlert('info', '⚠️', 'Aucun token Telegram renseigné'); return; }
-  if (!chatIds.length) { addAlert('info', '⚠️', 'Aucun chat ID renseigné'); return; }
-  addAlert('info', '🧪', 'Test Telegram en cours...');
-  const apiBase = `https://api.telegram.org/bot${token}/sendMessage`;
-  const text = `🧪 *Test TBlaugranaTurf*\nConnexion Telegram OK ✅\n${new Date().toLocaleTimeString('fr-FR')}`;
-  for (const chatId of chatIds) {
-    try {
-      const r = await fetch(apiBase, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
-      });
-      const json = await r.json();
-      if (r.ok && json.ok) {
-        addAlert('info', '✅', `Test OK → chat ${chatId}`);
-      } else {
-        addAlert('info', '❌', `Test ÉCHEC chat ${chatId} : ${json.description || r.status}`);
-      }
-    } catch (e) {
-      addAlert('info', '❌', `Test EXCEPTION chat ${chatId} : ${e.message}`);
-    }
-  }
-}
-
-function populateSettingsForm() {
-  document.getElementById('set-drop-pct').value     = getDropPct();
-  document.getElementById('set-max-cote').value      = getMaxCote();
-  document.getElementById('set-snap-secs').value     = CFG.snapSecs;
-  document.getElementById('set-prog-refresh').value  = CFG.progRefreshSecs;
-  document.getElementById('set-max-alerts').value    = CFG.maxAlerts;
-  document.getElementById('set-tg-max-cote').value   = CFG.tgMaxCote;
-  document.getElementById('set-tg-token').value      = CFG.tgToken;
-  document.getElementById('set-tg-chatids').value    = CFG.tgChatIds.join(', ');
-  document.getElementById('set-audio-on').checked    = S.audioOn;
-  document.getElementById('set-tg-on').checked       = S.tgOn;
-  document.getElementById('set-hide-rising').checked = S.hideRising;
-  document.getElementById('set-hide-np').checked     = S.hideNonPartants;
-}
-
-function gatherSettingsForm() {
-  return {
-    dropPct:         clampNum(document.getElementById('set-drop-pct').value, 1, 99, DEFAULTS.dropPct),
-    maxCote:         clampNum(document.getElementById('set-max-cote').value, 1, 999, DEFAULTS.maxCote),
-    snapSecs:        clampNum(document.getElementById('set-snap-secs').value, 0, 600, DEFAULTS.snapSecs),
-    progRefreshSecs: clampNum(document.getElementById('set-prog-refresh').value, 30, 600, DEFAULTS.progRefreshSecs),
-    maxAlerts:       clampNum(document.getElementById('set-max-alerts').value, 1, 20, DEFAULTS.maxAlerts),
-    tgMaxCote:       clampNum(document.getElementById('set-tg-max-cote').value, 1, 999, DEFAULTS.tgMaxCote),
-    tgToken:         document.getElementById('set-tg-token').value.trim() || DEFAULTS.tgToken,
-    tgChatIds:       document.getElementById('set-tg-chatids').value.split(',').map(s => s.trim()).filter(Boolean),
-    audioOn:         document.getElementById('set-audio-on').checked,
-    tgOn:            document.getElementById('set-tg-on').checked,
-    hideRising:      document.getElementById('set-hide-rising').checked,
-    hideNonPartants: document.getElementById('set-hide-np').checked,
-  };
-}
-
-function openSettings() {
-  populateSettingsForm();
-  document.getElementById('settings-overlay').classList.add('show');
-}
-function closeSettings() {
-  document.getElementById('settings-overlay').classList.remove('show');
-}
-
-document.getElementById('settings-btn').onclick   = openSettings;
-document.getElementById('manual-snap-btn').onclick = () => doSnapshot(true);
-document.getElementById('settings-close').onclick = closeSettings;
-document.getElementById('settings-overlay').onclick = (e) => {
-  if (e.target.id === 'settings-overlay') closeSettings();
-};
-
-document.getElementById('settings-test-btn').onclick = () => {
-  const token   = document.getElementById('set-tg-token').value.trim() || CFG.tgToken;
-  const chatIds = document.getElementById('set-tg-chatids').value.split(',').map(s => s.trim()).filter(Boolean);
-  testTelegram(token, chatIds);
-};
-
-document.getElementById('settings-save').onclick = () => {
-  const s = gatherSettingsForm();
-
-  document.getElementById('drop-pct-input').value = s.dropPct;
-  document.getElementById('max-cote').value        = s.maxCote;
-  CFG.snapSecs        = s.snapSecs;
-  CFG.progRefreshSecs = s.progRefreshSecs;
-  CFG.maxAlerts       = s.maxAlerts;
-  CFG.tgMaxCote       = s.tgMaxCote;
-  CFG.tgToken         = s.tgToken;
-  CFG.tgChatIds       = s.tgChatIds.length ? s.tgChatIds : DEFAULTS.tgChatIds;
-  S.audioOn           = s.audioOn;
-  S.tgOn              = s.tgOn;
-  S.hideRising        = s.hideRising;
-  S.hideNonPartants   = s.hideNonPartants;
-
-  // Garde les boutons SON / TELEGRAM (cachés) synchronisés
-  const ab = document.getElementById('audio-btn');
-  ab.className   = S.audioOn ? 'on' : '';
-  ab.textContent = S.audioOn ? '🔔 SON' : '🔕 MUET';
-  const tb = document.getElementById('tg-btn');
-  tb.className   = S.tgOn ? 'on' : '';
-  tb.textContent = S.tgOn ? '✈️ TG' : '✈️ TG OFF';
-
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (_) {}
-
-  if (S.participants.length) renderTable();
-
-  addAlert('info', '⚙️', 'Réglages enregistrés');
-  closeSettings();
-};
-
-document.getElementById('settings-reset').onclick = () => {
-  document.getElementById('drop-pct-input').value = DEFAULTS.dropPct;
-  document.getElementById('max-cote').value        = DEFAULTS.maxCote;
-  CFG.snapSecs        = DEFAULTS.snapSecs;
-  CFG.progRefreshSecs = DEFAULTS.progRefreshSecs;
-  CFG.maxAlerts       = DEFAULTS.maxAlerts;
-  CFG.tgMaxCote       = DEFAULTS.tgMaxCote;
-  CFG.tgToken         = DEFAULTS.tgToken;
-  CFG.tgChatIds       = [...DEFAULTS.tgChatIds];
-  S.audioOn           = DEFAULTS.audioOn;
-  S.tgOn              = DEFAULTS.tgOn;
-  S.hideRising        = DEFAULTS.hideRising;
-  S.hideNonPartants   = DEFAULTS.hideNonPartants;
-
-  const ab = document.getElementById('audio-btn');
-  ab.className   = S.audioOn ? 'on' : '';
-  ab.textContent = S.audioOn ? '🔔 SON' : '🔕 MUET';
-  const tb = document.getElementById('tg-btn');
-  tb.className   = S.tgOn ? 'on' : '';
-  tb.textContent = S.tgOn ? '✈️ TG' : '✈️ TG OFF';
-
-  try { localStorage.removeItem(SETTINGS_KEY); } catch (_) {}
-
-  if (S.participants.length) renderTable();
-
-  populateSettingsForm();
-  addAlert('info', '↩️', 'Réglages réinitialisés');
 };
 
 // ── AUTO-SWITCH ─────────────────────────────────────────
