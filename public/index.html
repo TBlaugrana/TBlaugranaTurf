@@ -653,7 +653,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
 
 <!-- Inputs cachés — valeurs toujours lues par le JS (affichage local uniquement) -->
 <input type="number" id="max-cote"       value="15" min="1" max="999" style="display:none">
-<input type="number" id="drop-pct-input" value="10" min="1" max="99"  style="display:none">
+<input type="number" id="drop-pct-input" value="15" min="1" max="99"  style="display:none">
 
 <!-- FILTER BAR — décompte -->
 <div id="filter-bar">
@@ -976,6 +976,19 @@ function isAnnulee(obj) {
   return typeof s === 'string' && s.toUpperCase().includes('ANNULE');
 }
 
+// ⚠️ Filtre "courses françaises uniquement" — même logique que côté
+// serveur (voir server.js), non vérifiée en conditions réelles. Si des
+// courses étrangères passent encore le filtre, dis-le moi.
+function isFrench(reunion) {
+  const p = reunion?.pays;
+  if (!p) return true;
+  const code = (p.code || '').toUpperCase();
+  const lib  = (p.libelle || '').toUpperCase();
+  if (['FRA', 'FR', 'FRANCE'].includes(code)) return true;
+  if (lib === 'FRANCE') return true;
+  return !code && !lib;
+}
+
 async function loadProg() {
   // IMPORTANT : ne PAS réécrire S.today si elle est déjà définie.
   // Avant, loadProg() forçait S.today = aujourd'hui à chaque appel, y
@@ -1002,8 +1015,10 @@ async function loadProg() {
     const races = [];
     const reunions = data?.programme?.reunions || [];
     let nbAnnulees = 0;
+    let nbEtrangeres = 0;
     for (const ru of reunions) {
       if (isAnnulee(ru)) { nbAnnulees += (ru.courses || []).length; continue; }
+      if (!isFrench(ru)) { nbEtrangeres += (ru.courses || []).length; continue; }
       const hip = ru.hippodrome?.libelleCourt || ru.hippodrome?.libelleLong || `R${ru.numOfficiel}`;
       for (const co of (ru.courses || [])) {
         if (isAnnulee(co)) { nbAnnulees++; continue; }
@@ -1023,6 +1038,7 @@ async function loadProg() {
     setStatus(true);
 
     if (nbAnnulees > 0) addAlert('prog', '🚫', `${nbAnnulees} course(s) annulée(s) masquée(s)`);
+    if (nbEtrangeres > 0) addAlert('prog', '🌍', `${nbEtrangeres} course(s) étrangère(s) masquée(s)`);
 
     if (races.length > 0) {
       addAlert('prog', '📋', `Programme : ${races.length} courses dans ${reunions.length} réunions`);
@@ -1100,60 +1116,24 @@ function doSnapshot(force = false) {
 }
 
 // ── TELEGRAM ─────────────────────────────────────────────
-// Envoie un message à tous les chat IDs configurés.
-// Conditions pour envoyer :
-//   - Telegram activé (S.tgOn)
-//   - snapDone = true (on est dans la fenêtre ou après snapshot)
-//   - Cote FINALE <= CFG.tgMaxCote  (peu importe la cote snap)
-//   - Chute >= DROP_PCT%
-async function sendTelegram(horse, snap, cur, dropPct, race, secsLeft) {
-  if (!S.tgOn) return;
-  const apiBase  = `https://api.telegram.org/bot${CFG.tgToken}/sendMessage`;
-  const raceLabel = `R${race.reunion}C${race.course}`;
-  const hip       = race.hip ? `${race.hip} — ` : '';
-  const secsStr   = secsLeft > 0 ? `⏱ ${secsLeft}s avant départ` : '🚨 DÉPART IMMINENT';
-  const text =
-    `🚨 *ALERTE ${raceLabel}* 🚨\n` +
-    `🐎 ${horse.numPmu} — *${horse.nom}*\n` +
-    `${snap} ➡️ ${cur} (−${dropPct.toFixed(0)}%)\n` +
-    `${hip}${race.libelle}\n` +
-    `${secsStr}`;
-
-  addAlert('info', '✈️', `Envoi Telegram → ${CFG.tgChatIds.join(', ')}…`);
-
-  let allOk = true;
-  for (const chatId of CFG.tgChatIds) {
-    try {
-      const r = await fetch(apiBase, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
-      });
-      const json = await r.json();
-      if (!r.ok || !json.ok) {
-        addAlert('info', '❌', `TG erreur chat ${chatId} : ${json.description || r.status}`);
-        allOk = false;
-      }
-    } catch (e) {
-      addAlert('info', '❌', `TG exception chat ${chatId} : ${e.message}`);
-      allOk = false;
-    }
-  }
-  if (allOk) addAlert('info', '✅', `Telegram envoyé — ${horse.nom}`);
-}
+// L'envoi Telegram est désormais géré côté SERVEUR (server.js),
+// qui tourne en continu même si personne n'est connecté à cette
+// page. Le front ne fait plus que de l'affichage / des alertes
+// sonores locales — plus aucun envoi Telegram n'est déclenché
+// depuis le navigateur (ça évite les notifications en double si
+// plusieurs personnes ont la page ouverte en même temps).
 
 // ── DÉTECTION DES CHUTES ────────────────────────────────
 function checkDrops() {
   if (!S.snapDone) return;
   const minPct   = getDropPct();
   const maxUI    = getMaxCote();      // filtre d'affichage UI
-  const maxTg    = CFG.tgMaxCote;    // filtre Telegram (cote finale uniquement)
   const race     = S.programme[effectiveIdx()];
   const secsLeft = Math.round((race.depart - Date.now()) / 1000);
 
-  // Alertes dans les 30s avant le départ ET jusqu'à 2 min après
+  // Alerte visible tant que le bot suit cette course côté serveur
+  // (voir server.js — plus de plafond fixe de 2 min).
   if (secsLeft > CFG.snapSecs) return;   // trop tôt, snapshot pas encore pris
-  if (secsLeft < -120) return;           // plus de 2 min après départ → stop
 
   for (const p of S.participants) {
     if (p.statut !== 'PARTANT' || !p.dernierRapportDirect) continue;
@@ -1173,11 +1153,7 @@ function checkDrops() {
 
     const row = document.getElementById(`row-${p.numPmu}`);
     if (row) { row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 900); }
-
-    // Telegram : cote finale <= tgMaxCote
-    if (cur <= maxTg) {
-      sendTelegram(p, snap, cur, drop, race, secsLeft);
-    }
+    // (l'envoi Telegram est géré côté serveur — voir server.js)
   }
 }
 
@@ -1409,6 +1385,32 @@ function autoSwitch() {
 }
 
 // ── TICK SECONDAIRE (UI + programme) ────────────────────
+// ── SYNCHRO SNAPSHOT SERVEUR ─────────────────────────────
+// Le serveur (server.js) prend son propre snapshot à T0 en continu,
+// même si personne n'est connecté. Cette fonction récupère cet état
+// et l'adopte si la course suivie côté serveur correspond à celle
+// affichée ici — utile pour un visiteur qui se connecte APRÈS le
+// départ : il récupère directement le snapshot pris pendant son
+// absence, au lieu d'en prendre un (faux) localement, trop tard.
+async function syncServerState(race) {
+  try {
+    const r = await fetchWithTimeout('/api/state', {}, 1500);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.race || !race) return;
+    if (data.race.reunion !== race.reunion || data.race.course !== race.course) return;
+
+    if (data.snapDone) {
+      S.snapDone = true;
+      document.getElementById('snap-badge').style.display = 'block';
+      for (const p of data.participants) {
+        if (p.snap != null) S.snapCotes[p.numPmu] = p.snap;
+        if (p.alerted) S.alertedDrop.add(p.numPmu);
+      }
+    }
+  } catch (_) { /* échec silencieux — on retentera au tick suivant */ }
+}
+
 async function tick() {
   S.tick++;
   if (S.programme.length === 0) return;
@@ -1418,6 +1420,11 @@ async function tick() {
   S.curIdx   = idx;
   const race = S.programme[idx];
   const secsLeft = Math.round((race.depart - Date.now()) / 1000);
+
+  // Récupère le snapshot pris par le SERVEUR à T0 (utile si on se
+  // connecte après le départ : le serveur a déjà pris le snapshot
+  // pendant qu'on n'était pas là).
+  syncServerState(race);
 
   // Mise à jour UI course
   document.getElementById('race-code').textContent    = `R${race.reunion} · C${race.course}`;
@@ -1459,6 +1466,11 @@ async function tick() {
     await loadProg();
     if (S.programme.length !== prevLen) updateNav();
   }
+
+  // Sécurité : si syncServerState() vient d'apporter un snapshot alors
+  // que le tableau était déjà affiché, on le rafraîchit pour montrer
+  // la colonne CHUTE à jour sans attendre le prochain changement de cote.
+  if (S.participants.length) renderTable();
 }
 
 // ── FETCH PARTICIPANTS AVEC ETAG ─────────────────────────
@@ -1705,6 +1717,7 @@ async function boot() {
         const races = [];
         for (const ru of (data?.programme?.reunions || [])) {
           if (isAnnulee(ru)) continue;
+          if (!isFrench(ru)) continue;
           const hip = ru.hippodrome?.libelleCourt || ru.hippodrome?.libelleLong || `R${ru.numOfficiel}`;
           for (const co of (ru.courses || [])) {
             if (isAnnulee(co)) continue;
@@ -1714,42 +1727,4 @@ async function boot() {
               depart:  co.heureDepart,
               libelle: co.libelle || co.libelleCourt || `Course ${co.numOrdre}`,
               hip,
-              disc: co.discipline || co.specialite || '',
-            });
-          }
-        }
-        if (races.length) {
-          S.today     = ds;
-          S.programme = races.sort((a, b) => a.depart - b.depart);
-          S.lastProg  = Date.now();
-          setStatus(true);
-          addAlert('prog', '📅', `Pas de courses aujourd'hui — ${jours[d.getDay()]} ${ds.slice(6)}/${ds.slice(4, 6)} : ${races.length} courses`);
-          break;
-        }
-      } catch (_) {}
-    }
-
-    if (S.programme.length === 0) {
-      addAlert('prog', '⚠️', 'Aucun programme trouvé. Vérifiez la connexion.');
-      setStatus(false);
-    }
-  }
-
-  if (S.programme.length > 0) {
-    S.curRaceIdx       = findNext();
-    S.curIdx           = S.curRaceIdx;
-    S.lastOddsChangeAt = Date.now();
-    S.oddsFrozenAt     = null;
-    updateNav();
-  }
-
-  document.getElementById('loading').style.display = 'none';
-  tick();
-  setInterval(tick, 1000);
-  cotesLoop();
-}
-
-boot();
-</script>
-</body>
-</html>
+              disc: co.discipline || co
