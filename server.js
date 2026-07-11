@@ -311,6 +311,14 @@ async function sendTelegram(text) {
   }
 }
 
+function fmtElapsed(secs) {
+  const s = Math.max(0, secs);
+  if (s < 60) return `${s}s après le départ`;
+  const min = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${min}min${String(rem).padStart(2, '0')}s après le départ` : `${min}min après le départ`;
+}
+
 function checkDropsAndNotify(race) {
   if (!bot.snapDone) return;
   const secsLeft = Math.round((race.depart - Date.now()) / 1000);
@@ -335,13 +343,11 @@ function checkDropsAndNotify(race) {
     botLog('🔥', `${p.nom} — ${snap} → ${cur} (−${drop.toFixed(0)}%)`);
 
     const raceLabel = `R${race.reunion}C${race.course}`;
-    const hip = race.hip ? `${race.hip} — ` : '';
-    const secsStr = secsLeft > 0 ? `⏱ ${secsLeft}s avant départ` : '🚨 DÉPART IMMINENT';
+    const secsStr = `⏱ ${fmtElapsed(-secsLeft)}`;
     const text =
       `🚨 *ALERTE ${raceLabel}* 🚨\n` +
       `🐎 ${p.numPmu} — *${p.nom}*\n` +
       `${snap} ➡️ ${cur} (−${drop.toFixed(0)}%)\n` +
-      `${hip}${race.libelle}\n` +
       `${secsStr}`;
     sendTelegram(text);
   }
