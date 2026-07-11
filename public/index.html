@@ -704,6 +704,32 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
 </div>
 
 <script>
+window.addEventListener('error', function (e) {
+  try {
+    var sub = document.getElementById('load-sub');
+    var loading = document.getElementById('loading');
+    if (loading) loading.style.display = 'flex';
+    if (sub) {
+      sub.style.color = '#d93250';
+      sub.style.wordBreak = 'break-word';
+      sub.style.maxWidth = '90vw';
+      sub.textContent = 'ERREUR JS : ' + e.message + ' (' + (e.filename || '?') + ':' + e.lineno + ':' + e.colno + ')';
+    }
+  } catch (_) {}
+});
+window.addEventListener('unhandledrejection', function (e) {
+  try {
+    var sub = document.getElementById('load-sub');
+    var loading = document.getElementById('loading');
+    if (loading) loading.style.display = 'flex';
+    if (sub) {
+      sub.style.color = '#d93250';
+      sub.style.wordBreak = 'break-word';
+      sub.style.maxWidth = '90vw';
+      sub.textContent = 'PROMESSE REJETÉE : ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
+    }
+  } catch (_) {}
+});
 'use strict';
 // ═══════════════════════════════════════════════════════
 //  TBlaugranaTurf — Bot de surveillance des cotes PMU
@@ -1727,4 +1753,60 @@ async function boot() {
               depart:  co.heureDepart,
               libelle: co.libelle || co.libelleCourt || `Course ${co.numOrdre}`,
               hip,
-              disc: co.discipline || co
+              disc: co.discipline || co.specialite || '',
+            });
+          }
+        }
+        if (races.length) {
+          S.today     = ds;
+          S.programme = races.sort((a, b) => a.depart - b.depart);
+          S.lastProg  = Date.now();
+          setStatus(true);
+          addAlert('prog', '📅', `Pas de courses aujourd'hui — ${jours[d.getDay()]} ${ds.slice(6)}/${ds.slice(4, 6)} : ${races.length} courses`);
+          break;
+        }
+      } catch (_) {}
+    }
+
+    if (S.programme.length === 0) {
+      addAlert('prog', '⚠️', 'Aucun programme trouvé. Vérifiez la connexion.');
+      setStatus(false);
+    }
+  }
+
+  if (S.programme.length > 0) {
+    S.curRaceIdx       = findNext();
+    S.curIdx           = S.curRaceIdx;
+    S.lastOddsChangeAt = Date.now();
+    S.oddsFrozenAt     = null;
+    updateNav();
+  }
+
+  document.getElementById('loading').style.display = 'none';
+  tick();
+  setInterval(tick, 1000);
+  cotesLoop();
+}
+
+const _bootWatchdog = setTimeout(function () {
+  const sub = document.getElementById('load-sub');
+  if (sub && sub.textContent.indexOf('CHARGEMENT DU PROGRAMME') !== -1) {
+    sub.style.color = '#d93250';
+    sub.textContent = 'BLOQUÉ : boot() ne répond pas après 8s (voir Console)';
+  }
+}, 8000);
+
+boot().catch(function (e) {
+  const sub = document.getElementById('load-sub');
+  if (sub) {
+    sub.style.color = '#d93250';
+    sub.style.wordBreak = 'break-word';
+    sub.style.maxWidth = '90vw';
+    sub.textContent = 'ERREUR DANS boot() : ' + (e && e.message ? e.message : e);
+  }
+}).finally(function () {
+  clearTimeout(_bootWatchdog);
+});
+</script>
+</body>
+</html>
