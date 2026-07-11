@@ -2,7 +2,10 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>TBlaugranaTurf</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230b0f1a'/%3E%3Ctext y='50' x='5' font-size='50'%3E🐎%3C/text%3E%3C/svg%3E">
@@ -29,8 +32,9 @@
 }
 
 /* ── RESET ─────────────────────── */
-*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
-html, body { height:100%; overflow:hidden; }
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { height:100%; overflow:hidden; overscroll-behavior:none; }
+html { touch-action: manipulation; } /* supprime le délai de 300ms au tap sur iOS */
 body {
   background: var(--bg);
   color: var(--text);
@@ -39,6 +43,12 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* iPhone : tient compte de la barre Safari qui se rétracte */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  -webkit-font-smoothing: antialiased;
   background-image:
     radial-gradient(ellipse at 50% 0%, rgba(26,111,212,.06) 0%, transparent 55%),
     radial-gradient(ellipse at 50% 100%, rgba(13,158,92,.04) 0%, transparent 50%);
@@ -46,6 +56,21 @@ body {
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoom */
+
+/* ── PETITS ÉCRANS (iPhone mini/SE et similaires < 380px) ── */
+@media (max-width: 380px) {
+  body { font-size: 16px; }
+  .logo { font-size: 32px; letter-spacing: 3px; }
+  .logo-horse { font-size: 30px; }
+  #race-name { font-size: 18px; }
+  #countdown { font-size: 46px; }
+  .cd-mini { font-size: 30px; }
+  .hname { font-size: 17px; }
+  .cdirect { font-size: 21px; }
+  .cdrop { font-size: 19px; }
+  #th, .horse { grid-template-columns: 26px 1fr 48px 42px 78px; padding-left: 10px; padding-right: 10px; }
+}
 
 /* ── HEADER ──────────────────── */
 #header {
@@ -58,6 +83,7 @@ body {
   position: relative;
   gap: 8px;
   box-shadow: 0 2px 18px rgba(26,111,212,.12);
+  touch-action: manipulation;
 }
 #header::after {
   content: '';
@@ -131,7 +157,9 @@ body {
   line-height: 1;
 }
 .nav-btn:hover { background:var(--accent); border-color:var(--accent); color:#fff; box-shadow:0 0 12px rgba(61,142,240,.4); }
+.nav-btn:active { transform:scale(.92); }
 .nav-btn:disabled { opacity:.2; cursor:not-allowed; pointer-events:none; }
+.nav-btn { touch-action: manipulation; }
 
 #race-info { flex:1; min-width:0; }
 #race-code {
@@ -298,7 +326,7 @@ body {
 #footer-bar {
   background: var(--surface2);
   border-top: 1px solid var(--border);
-  padding: 5px 12px;
+  padding: 5px 12px calc(5px + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -539,7 +567,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
   border: 1px solid var(--border2);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: 16px; /* >=16px : évite le zoom auto au focus sur iOS Safari */
   padding: 9px 10px;
   border-radius: var(--r);
   outline: none;
@@ -591,7 +619,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
 #settings-footer {
   display: flex;
   gap: 10px;
-  padding: 12px 16px 16px;
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -663,6 +691,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
       <div id="cd-wrap-mini" style="display:flex;align-items:center;gap:6px">
         <span id="countdown-mini" class="cd-mini">--:--</span>
         <span id="snap-badge-mini" style="display:none;background:rgba(245,192,64,.1);border:1px solid rgba(245,192,64,.4);color:var(--yellow);font-size:11px;font-family:var(--font-mono);padding:2px 6px;border-radius:3px;letter-spacing:1px;animation:glow 2s infinite">📸 SNAP</span>
+        <span id="frozen-badge-mini" style="display:none;background:rgba(79,189,232,.1);border:1px solid rgba(79,189,232,.4);color:#4fbde8;font-size:11px;font-family:var(--font-mono);padding:2px 6px;border-radius:3px;letter-spacing:1px;animation:glow 2s infinite">❄️ GEL</span>
       </div>
     </div>
   </div>
@@ -1473,6 +1502,12 @@ async function tick() {
   if (cdLabel) cdLabel.textContent = secsLeft < 0 ? 'PARTI DEPUIS' : 'DÉPART DANS';
   const snapMini = document.getElementById('snap-badge-mini');
   if (snapMini) snapMini.style.display = S.snapDone ? 'inline' : 'none';
+  // ❄️ Cotes figées (gel confirmé après oddsStableMs sans changement) —
+  // meilleur indicateur disponible pour deviner que la prise de paris
+  // vient de fermer (l'API PMU n'expose pas de champ explicite "paris
+  // fermés" ; voir la remarque sur le champ departImminent).
+  const frozenMini = document.getElementById('frozen-badge-mini');
+  if (frozenMini) frozenMini.style.display = S.oddsFrozenAt !== null ? 'inline' : 'none';
 
   // Progress bar (sur 3600s avant départ)
   const pct = Math.max(0, Math.min(100, (1 - Math.max(0, secsLeft) / 3600) * 100));
