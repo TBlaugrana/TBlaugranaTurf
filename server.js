@@ -315,7 +315,11 @@ function checkDropsAndNotify(race) {
   if (!bot.snapDone) return;
   const secsLeft = Math.round((race.depart - Date.now()) / 1000);
   if (secsLeft > 0) return;      // snapshot pas encore pris (avant T0)
-  if (secsLeft < -120) return;   // plus de 2 min après le départ
+  // Pas de plafond fixe ici : la fenêtre d'alerte reste ouverte tant que
+  // le bot suit cette course. Elle se ferme naturellement quand autoSwitch()
+  // bascule sur la course suivante (gel confirmé + 4 min, ou sécurité
+  // 20 min après l'heure prévue — voir autoSwitch()), ce qui réinitialise
+  // snapDone/snapCotes/alertedDrop via resetForNewRace().
 
   for (const p of bot.participants) {
     if (p.statut !== 'PARTANT' || !p.dernierRapportDirect) continue;
