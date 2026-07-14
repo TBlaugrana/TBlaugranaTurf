@@ -97,8 +97,10 @@ const PMU_PARTS_BASE = 'https://online.turfinfo.api.pmu.fr/rest/client/7';
 
 const BOT_CFG = {
   pollMs:               1000,    // rythme de surveillance des cotes
-  progRefreshMs:        120000,  // rafraîchissement du programme
-  oddsStableMs:         10000,   // durée sans changement pour confirmer le gel
+  progRefreshMs:        120000,  // rafraîchissement du programme complet
+  raceRefreshMs:        15000,   // rafraîchissement ciblé de la course suivie (détecte un retard de départ)
+  raceRefreshWindowMs:  600000,  // ne rafraîchit la course suivie que dans les 10 min autour du départ prévu
+  oddsStableMs:         20000,   // durée sans changement pour confirmer le gel (après le VRAI départ)
   switchAfterFreezeMs:  240000,  // bascule N ms après le gel confirmé (4 min)
   maxWaitAfterDepartMs: 1200000, // sécurité anti-blocage (20 min)
   dropPctMin:           15,      // seuil de chute pour notifier (%)
@@ -121,6 +123,8 @@ const bot = {
   oddsFrozenAt:     null,
   lastPartsHash:    '',
   lastPoll:         null,
+  lastRaceRefresh:  0,      // dernier rafraîchissement ciblé de l'heure de départ réelle
+  raceStatut:       null,   // statut brut renvoyé par l'API pour la course suivie (diagnostic)
   log:              [],     // derniers événements { t, icon, msg }
 };
 
@@ -239,6 +243,55 @@ function findNextRaceIdx() {
   return Math.max(0, bot.programme.length - 1);
 }
 
+// ── Rafraîchissement ciblé de la course suivie ──────────────
+// Le programme complet du jour n'est rechargé que toutes les 2 min
+// (BOT_CFG.progRefreshMs), ce qui est trop rare pour détecter un retard
+// de dernière minute annoncé par le PMU (heureDepart mise à jour côté
+// API alors que le départ prévu initial est déjà dépassé). Sans ça, le
+// bot peut croire la course "démarrée" (now >= depart) et déclarer un
+// gel après une simple accalmie de mises, alors que le vrai départ n'a
+// pas encore eu lieu.
+// On interroge donc, uniquement autour du départ prévu (± raceRefreshWindowMs)
+// et à un rythme plus soutenu (raceRefreshMs), le détail de CETTE course
+// pour récupérer sa version la plus à jour de heureDepart (et son statut,
+// à titre de diagnostic — le nom exact du champ n'ayant pas pu être vérifié
+// en conditions réelles faute d'accès direct à l'API PMU depuis cet
+// environnement de dev).
+async function refreshCurrentRaceDepart() {
+  if (bot.curRaceIdx < 0 || bot.curRaceIdx >= bot.programme.length) return;
+  const race = bot.programme[bot.curRaceIdx];
+  const now = Date.now();
+
+  if (Math.abs(now - race.depart) > BOT_CFG.raceRefreshWindowMs) return;
+  if (now - bot.lastRaceRefresh < BOT_CFG.raceRefreshMs) return;
+  bot.lastRaceRefresh = now;
+
+  const url = `${PMU_PROG_BASE}/programme/${datePmu(bot.today)}/R${race.reunion}/C${race.course}?specialisation=OFFLINE`;
+  try {
+    const data = await fetchJson(url, 5000);
+    const co = data?.course || data;
+    const newDepart = co?.heureDepart;
+    const statut = co?.statut || co?.statutCourse || null;
+
+    if (statut && statut !== bot.raceStatut) {
+      bot.raceStatut = statut;
+      botLog('ℹ️', `Statut course R${race.reunion}C${race.course} : ${statut}`);
+    }
+
+    if (typeof newDepart === 'number' && newDepart !== race.depart) {
+      const deltaSec = Math.round((newDepart - race.depart) / 1000);
+      botLog('⏰', `Départ R${race.reunion}C${race.course} mis à jour (${deltaSec >= 0 ? '+' : ''}${deltaSec}s) — retard pris en compte`);
+      race.depart = newDepart;
+      // Le départ a bougé : on redonne sa chance à la fenêtre de stabilité
+      // (sinon un vieux lastOddsChangeAt antérieur au nouveau départ
+      // pourrait immédiatement satisfaire le seuil de gel).
+      if (bot.lastOddsChangeAt < newDepart) bot.lastOddsChangeAt = now;
+    }
+  } catch (_) {
+    // échec silencieux, on retente au prochain tick
+  }
+}
+
 function resetForNewRace() {
   bot.snapDone = false;
   bot.snapCotes = {};
@@ -247,6 +300,8 @@ function resetForNewRace() {
   bot.lastOddsChangeAt = Date.now();
   bot.oddsFrozenAt = null;
   bot.lastPartsHash = '';
+  bot.lastRaceRefresh = 0;
+  bot.raceStatut = null;
 }
 
 function autoSwitch() {
@@ -356,6 +411,7 @@ function checkDropsAndNotify(race) {
 
 async function pollCurrentRace() {
   if (bot.curRaceIdx < 0 || bot.curRaceIdx >= bot.programme.length) return;
+  await refreshCurrentRaceDepart();
   const race = bot.programme[bot.curRaceIdx];
   const url = `${PMU_PARTS_BASE}/programme/${datePmu(bot.today)}/R${race.reunion}/C${race.course}/participants?specialisation=OFFLINE`;
 
@@ -449,6 +505,7 @@ app.get('/api/state', (req, res) => {
     participants,
     snapDone: bot.snapDone,
     oddsFrozenAt: bot.oddsFrozenAt,
+    raceStatut: bot.raceStatut,
     lastPoll: bot.lastPoll,
     log: bot.log.slice(-15),
   });
