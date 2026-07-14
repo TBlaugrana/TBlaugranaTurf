@@ -98,7 +98,7 @@ const PMU_PARTS_BASE = 'https://online.turfinfo.api.pmu.fr/rest/client/7';
 const BOT_CFG = {
   pollMs:               1000,    // rythme de surveillance des cotes
   progRefreshMs:        120000,  // rafraîchissement du programme
-  oddsStableMs:         30000,   // durée sans changement pour confirmer le gel
+  oddsStableMs:         10000,   // durée sans changement pour confirmer le gel
   switchAfterFreezeMs:  240000,  // bascule N ms après le gel confirmé (4 min)
   maxWaitAfterDepartMs: 1200000, // sécurité anti-blocage (20 min)
   dropPctMin:           15,      // seuil de chute pour notifier (%)
@@ -191,6 +191,7 @@ async function loadProgrammeForDate(ds) {
         libelle: co.libelle || co.libelleCourt || `Course ${co.numOrdre}`,
         hip,
         disc: co.discipline || co.specialite || '',
+        partants: co.nombreDeclaresPartants ?? null,
       });
     }
   }
