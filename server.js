@@ -376,9 +376,17 @@ async function pollCurrentRace() {
   const now = Date.now();
   if (!unchanged) {
     bot.lastOddsChangeAt = now;
-  } else if (bot.oddsFrozenAt === null && now >= race.depart && (now - bot.lastOddsChangeAt) >= BOT_CFG.oddsStableMs) {
-    bot.oddsFrozenAt = now;
-    botLog('🧊', `Cotes figées R${race.reunion}C${race.course} — bascule dans ${Math.round(BOT_CFG.switchAfterFreezeMs / 1000)}s`);
+  } else if (bot.oddsFrozenAt === null && now >= race.depart) {
+    // Le compteur de stabilité ne peut jamais démarrer avant le départ :
+    // si les cotes n'avaient pas bougé depuis un moment AVANT T0 (simple
+    // creux entre deux mises, course pas encore partie), on ne veut pas
+    // déclarer le gel dès l'instant du départ. On exige oddsStableMs de
+    // stabilité mesurée à partir de race.depart au plus tôt.
+    const stableSince = Math.max(bot.lastOddsChangeAt, race.depart);
+    if ((now - stableSince) >= BOT_CFG.oddsStableMs) {
+      bot.oddsFrozenAt = now;
+      botLog('🧊', `Cotes figées R${race.reunion}C${race.course} — bascule dans ${Math.round(BOT_CFG.switchAfterFreezeMs / 1000)}s`);
+    }
   }
 
   // Snapshot pris exactement à/après l'heure de départ (T0)
