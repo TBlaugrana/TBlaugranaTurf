@@ -39,7 +39,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: 16px;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -60,15 +60,15 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 
 /* ── PETITS ÉCRANS (iPhone mini/SE et similaires < 380px) ── */
 @media (max-width: 380px) {
-  body { font-size: 13px; }
-  .logo { font-size: 20px; letter-spacing: 2px; }
-  .logo-horse { font-size: 20px; }
-  #race-name { font-size: 14px; }
-  .cd-mini { font-size: 22px; }
-  .hname { font-size: 13px; }
-  .cdirect { font-size: 16px; }
-  .cdrop { font-size: 14px; }
-  #th, .horse { grid-template-columns: 22px 1fr 40px 36px 62px; padding-left: 8px; padding-right: 8px; }
+  body { font-size: 15px; }
+  .logo { font-size: 23px; letter-spacing: 2px; }
+  .logo-horse { font-size: 23px; }
+  #race-name { font-size: 16px; }
+  .cd-mini { font-size: 25px; }
+  .hname { font-size: 15px; }
+  .cdirect { font-size: 18px; }
+  .cdrop { font-size: 16px; }
+  #th, .horse { grid-template-columns: 25px 1fr 46px 41px 71px; padding-left: 9px; padding-right: 9px; }
 }
 
 /* ── HEADER ──────────────────── */
@@ -97,10 +97,10 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   justify-content: center;
   gap: 8px;
 }
-.logo-horse { font-size: 24px; line-height: 1; filter: drop-shadow(0 0 6px rgba(26,111,212,.4)); }
+.logo-horse { font-size: 28px; line-height: 1; filter: drop-shadow(0 0 6px rgba(26,111,212,.4)); }
 .logo {
   font-family: var(--font-ui);
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: 3px;
   background: linear-gradient(135deg, #1a6fd4 0%, #0d9e5c 100%);
@@ -163,13 +163,13 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 #race-info { flex:1; min-width:0; }
 #race-code {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--accent2);
   letter-spacing: 1.5px;
   margin-bottom: 1px;
 }
 #race-name {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -178,7 +178,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   line-height: 1.2;
 }
 #race-sub {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text3);
   margin-top: 1px;
   letter-spacing: .2px;
@@ -188,14 +188,14 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 }
 #race-counter {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text3);
   margin-top: 1px;
 }
 
 #cd-wrap { flex-shrink:0; text-align:right; }
 #cd-label {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text3);
   letter-spacing: 1.5px;
   margin-bottom: 1px;
@@ -204,7 +204,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 }
 #countdown {
   font-family: var(--font-mono);
-  font-size: 34px;
+  font-size: 39px;
   font-weight: 700;
   color: var(--green);
   line-height: 1;
@@ -249,7 +249,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   gap: 5px;
 }
 .flabel {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text3);
   letter-spacing: 1px;
   white-space: nowrap;
@@ -336,11 +336,11 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 #th {
   background: var(--surface2);
   border-bottom: 1px solid var(--border2);
-  padding: 6px 10px;
+  padding: 7px 11px;
   display: grid;
-  grid-template-columns: 26px 1fr 46px 40px 72px;
+  grid-template-columns: 30px 1fr 52px 46px 82px;
   gap: 4px;
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 1px;
   color: var(--text3);
   text-transform: uppercase;
@@ -358,10 +358,10 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 }
 .horse {
   display: grid;
-  grid-template-columns: 26px 1fr 46px 40px 72px;
+  grid-template-columns: 30px 1fr 52px 46px 82px;
   gap: 4px;
   align-items: center;
-  padding: 9px 10px;
+  padding: 10px 11px;
   border-bottom: 1px solid rgba(30,37,64,.9);
   transition: background .12s;
   position: relative;
@@ -380,7 +380,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 
 .hnum {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text3);
   text-align: center;
   font-weight: 700;
@@ -390,7 +390,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   line-height: 1.4;
 }
 .hname {
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -401,20 +401,20 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 }
 .cdirect {
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 21px;
   font-weight: 700;
   text-align: center;
   letter-spacing: -0.5px;
 }
 .csnap {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 15px;
   text-align: center;
   color: var(--text3);
 }
 .cdrop {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: 18px;
   text-align: center;
   font-weight: 700;
   letter-spacing: -0.5px;
@@ -425,7 +425,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 .cdrop.hot  { color:var(--green); background:rgba(31,212,126,.14); box-shadow:0 0 10px rgba(31,212,126,.25); text-shadow:0 0 8px rgba(31,212,126,.4); }
 .cdrop.warm { color:var(--yellow); background:rgba(245,192,64,.14); }
 .cdrop.low  { color:var(--text2); background:rgba(255,255,255,.04); }
-.cdrop.up   { color:var(--red); background:rgba(240,68,85,.12); font-size: 16px; }
+.cdrop.up   { color:var(--red); background:rgba(240,68,85,.12); font-size: 18px; }
 .horse.alerted { background:rgba(31,212,126,.05); }
 .horse.alerted::before { width:3px; background:var(--green); }
 
@@ -483,7 +483,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
 }
 .cd-mini {
   font-family: var(--font-mono);
-  font-size: 26px;
+  font-size: 30px;
   font-weight: 700;
   color: var(--green);
   letter-spacing: -1px;
@@ -492,7 +492,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
 }
 .cd-mini.warn { color: var(--yellow); text-shadow: 0 0 10px rgba(245,192,64,.3); }
 .cd-mini.crit { color: var(--red); animation: blink .45s infinite; text-shadow: 0 0 10px rgba(240,68,85,.4); }
-.cd-mini.elapsed { color: var(--text2); text-shadow: none; font-size: 18px; }
+.cd-mini.elapsed { color: var(--text2); text-shadow: none; font-size: 21px; }
 
 /* ── SETTINGS OVERLAY ───────────── */
 #settings-overlay {
@@ -710,7 +710,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
   <span>CHEVAL</span>
   <span style="text-align:center">SNAP</span>
   <span style="text-align:center">COTE</span>
-  <span style="text-align:center;color:var(--green);font-size:10px;letter-spacing:1px;text-shadow:0 0 6px rgba(31,212,126,.3)">CHUTE</span>
+  <span style="text-align:center;color:var(--green);font-size:12px;letter-spacing:1px;text-shadow:0 0 6px rgba(31,212,126,.3)">CHUTE</span>
 </div>
 
 <!-- PARTICIPANTS LIST -->
@@ -1068,7 +1068,7 @@ function renderRaceView() {
 
   document.getElementById('race-code').textContent    = `R${meta.reunion} · C${meta.course}`;
   document.getElementById('race-name').textContent    = `${meta.hip ? meta.hip + ' — ' : ''}${meta.libelle}`;
-  document.getElementById('race-sub').textContent     = meta.disc + (live ? '' : '  ·  consultation (pas la course suivie en direct)');
+  document.getElementById('race-sub').textContent     = (meta.disc || '') + (meta.partants ? ` (${meta.partants})` : '') + (live ? '' : '  ·  consultation (pas la course suivie en direct)');
   document.getElementById('race-counter').textContent = `${idx + 1} / ${S.programme.length}`;
 
   const secsLeft = Math.round((meta.depart - Date.now()) / 1000);
