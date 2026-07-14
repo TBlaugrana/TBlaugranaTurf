@@ -389,6 +389,9 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   padding: 2px 0;
   line-height: 1.4;
 }
+.horse > div {
+  min-width: 0; /* laisse le conteneur du nom rétrécir dans la grille pour que l'ellipsis s'applique */
+}
 .hname {
   font-size: 17px;
   font-weight: 700;
@@ -819,10 +822,14 @@ function fmtCd(s) {
 function getMaxCote()  { const v = parseFloat(document.getElementById('max-cote').value);       return isNaN(v) ? 9999 : v; }
 function getDropPct()  { const v = parseFloat(document.getElementById('drop-pct-input').value); return isNaN(v) ? 25   : v; }
 
-const HORSE_NAME_MAX_LEN = 12;
+// Le nom complet est envoyé au DOM ; la colonne est en largeur flexible
+// (1fr) et le CSS (.hname { white-space:nowrap; overflow:hidden;
+// text-overflow:ellipsis }) tronque visuellement avec "…" seulement si
+// le nom déborde réellement de l'espace dispo — donc plus de caractères
+// affichés sur les écrans larges, et toujours un rendu propre sur les
+// petits écrans.
 function truncName(nom) {
-  if (!nom) return '';
-  return nom.length > HORSE_NAME_MAX_LEN ? nom.slice(0, HORSE_NAME_MAX_LEN - 1) + '…' : nom;
+  return nom || '';
 }
 
 // ── SON ─────────────────────────────────────────────────
