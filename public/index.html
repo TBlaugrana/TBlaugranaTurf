@@ -39,7 +39,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 17px;
+  font-size: 14px;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -60,23 +60,22 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 
 /* ── PETITS ÉCRANS (iPhone mini/SE et similaires < 380px) ── */
 @media (max-width: 380px) {
-  body { font-size: 16px; }
-  .logo { font-size: 32px; letter-spacing: 3px; }
-  .logo-horse { font-size: 30px; }
-  #race-name { font-size: 18px; }
-  #countdown { font-size: 46px; }
-  .cd-mini { font-size: 30px; }
-  .hname { font-size: 17px; }
-  .cdirect { font-size: 21px; }
-  .cdrop { font-size: 19px; }
-  #th, .horse { grid-template-columns: 26px 1fr 48px 42px 78px; padding-left: 10px; padding-right: 10px; }
+  body { font-size: 13px; }
+  .logo { font-size: 20px; letter-spacing: 2px; }
+  .logo-horse { font-size: 20px; }
+  #race-name { font-size: 14px; }
+  .cd-mini { font-size: 22px; }
+  .hname { font-size: 13px; }
+  .cdirect { font-size: 16px; }
+  .cdrop { font-size: 14px; }
+  #th, .horse { grid-template-columns: 22px 1fr 40px 36px 62px; padding-left: 8px; padding-right: 8px; }
 }
 
 /* ── HEADER ──────────────────── */
 #header {
   background: linear-gradient(180deg, #dae6f8 0%, #eef3fc 100%);
   border-bottom: 1px solid rgba(26,111,212,.2);
-  padding: 16px 14px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
   flex-shrink: 0;
@@ -98,12 +97,12 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   justify-content: center;
   gap: 8px;
 }
-.logo-horse { font-size: 38px; line-height: 1; filter: drop-shadow(0 0 6px rgba(26,111,212,.4)); }
+.logo-horse { font-size: 24px; line-height: 1; filter: drop-shadow(0 0 6px rgba(26,111,212,.4)); }
 .logo {
   font-family: var(--font-ui);
-  font-size: 40px;
+  font-size: 24px;
   font-weight: 700;
-  letter-spacing: 5px;
+  letter-spacing: 3px;
   background: linear-gradient(135deg, #1a6fd4 0%, #0d9e5c 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -134,7 +133,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 #race-bar {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  padding: 10px 12px;
+  padding: 7px 10px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -145,8 +144,8 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   background: rgba(61,142,240,.1);
   border: 1px solid rgba(61,142,240,.2);
   color: var(--text2);
-  font-size: 22px;
-  width: 34px; height: 34px;
+  font-size: 18px;
+  width: 28px; height: 28px;
   border-radius: var(--r);
   cursor: pointer;
   display: flex;
@@ -164,48 +163,48 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 #race-info { flex:1; min-width:0; }
 #race-code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 10px;
   color: var(--accent2);
-  letter-spacing: 2px;
+  letter-spacing: 1.5px;
   margin-bottom: 1px;
 }
 #race-name {
-  font-size: 21px;
+  font-size: 16px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  letter-spacing: .3px;
+  letter-spacing: .2px;
   line-height: 1.2;
 }
 #race-sub {
-  font-size: 15px;
+  font-size: 12px;
   color: var(--text3);
   margin-top: 1px;
-  letter-spacing: .3px;
+  letter-spacing: .2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 #race-counter {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 10px;
   color: var(--text3);
   margin-top: 1px;
 }
 
 #cd-wrap { flex-shrink:0; text-align:right; }
 #cd-label {
-  font-size: 13px;
+  font-size: 10px;
   color: var(--text3);
-  letter-spacing: 2px;
-  margin-bottom: 2px;
+  letter-spacing: 1.5px;
+  margin-bottom: 1px;
   text-transform: uppercase;
   font-family: var(--font-mono);
 }
 #countdown {
   font-family: var(--font-mono);
-  font-size: 56px;
+  font-size: 34px;
   font-weight: 700;
   color: var(--green);
   line-height: 1;
@@ -233,10 +232,10 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 #filter-bar {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  padding: 8px 12px;
+  padding: 5px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
 #filter-row1 {
@@ -250,7 +249,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   gap: 5px;
 }
 .flabel {
-  font-size: 12px;
+  font-size: 10px;
   color: var(--text3);
   letter-spacing: 1px;
   white-space: nowrap;
@@ -337,12 +336,12 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 #th {
   background: var(--surface2);
   border-bottom: 1px solid var(--border2);
-  padding: 9px 14px;
+  padding: 6px 10px;
   display: grid;
-  grid-template-columns: 32px 1fr 58px 48px 92px;
+  grid-template-columns: 26px 1fr 46px 40px 72px;
   gap: 4px;
-  font-size: 13px;
-  letter-spacing: 1.5px;
+  font-size: 10px;
+  letter-spacing: 1px;
   color: var(--text3);
   text-transform: uppercase;
   font-weight: 700;
@@ -359,10 +358,10 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 }
 .horse {
   display: grid;
-  grid-template-columns: 32px 1fr 58px 48px 92px;
+  grid-template-columns: 26px 1fr 46px 40px 72px;
   gap: 4px;
   align-items: center;
-  padding: 14px 14px;
+  padding: 9px 10px;
   border-bottom: 1px solid rgba(30,37,64,.9);
   transition: background .12s;
   position: relative;
@@ -381,17 +380,17 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 
 .hnum {
   font-family: var(--font-mono);
-  font-size: 17px;
+  font-size: 13px;
   color: var(--text3);
   text-align: center;
   font-weight: 700;
   background: rgba(255,255,255,.04);
   border-radius: 3px;
-  padding: 3px 0;
+  padding: 2px 0;
   line-height: 1.4;
 }
 .hname {
-  font-size: 20px;
+  font-size: 15px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -402,31 +401,31 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
 }
 .cdirect {
   font-family: var(--font-mono);
-  font-size: 25px;
+  font-size: 18px;
   font-weight: 700;
   text-align: center;
   letter-spacing: -0.5px;
 }
 .csnap {
   font-family: var(--font-mono);
-  font-size: 17px;
+  font-size: 13px;
   text-align: center;
   color: var(--text3);
 }
 .cdrop {
   font-family: var(--font-mono);
-  font-size: 23px;
+  font-size: 16px;
   text-align: center;
   font-weight: 700;
   letter-spacing: -0.5px;
-  padding: 4px 2px;
+  padding: 3px 2px;
   border-radius: 5px;
   box-sizing: border-box;
 }
 .cdrop.hot  { color:var(--green); background:rgba(31,212,126,.14); box-shadow:0 0 10px rgba(31,212,126,.25); text-shadow:0 0 8px rgba(31,212,126,.4); }
 .cdrop.warm { color:var(--yellow); background:rgba(245,192,64,.14); }
 .cdrop.low  { color:var(--text2); background:rgba(255,255,255,.04); }
-.cdrop.up   { color:var(--red); background:rgba(240,68,85,.12); font-size: 23px; }
+.cdrop.up   { color:var(--red); background:rgba(240,68,85,.12); font-size: 16px; }
 .horse.alerted { background:rgba(31,212,126,.05); }
 .horse.alerted::before { width:3px; background:var(--green); }
 
@@ -484,7 +483,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
 }
 .cd-mini {
   font-family: var(--font-mono);
-  font-size: 36px;
+  font-size: 26px;
   font-weight: 700;
   color: var(--green);
   letter-spacing: -1px;
@@ -493,7 +492,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
 }
 .cd-mini.warn { color: var(--yellow); text-shadow: 0 0 10px rgba(245,192,64,.3); }
 .cd-mini.crit { color: var(--red); animation: blink .45s infinite; text-shadow: 0 0 10px rgba(240,68,85,.4); }
-.cd-mini.elapsed { color: var(--text2); text-shadow: none; font-size: 22px; }
+.cd-mini.elapsed { color: var(--text2); text-shadow: none; font-size: 18px; }
 
 /* ── SETTINGS OVERLAY ───────────── */
 #settings-overlay {
@@ -711,7 +710,7 @@ input[type=number]::-webkit-outer-spin-button { opacity:.3; }
   <span>CHEVAL</span>
   <span style="text-align:center">SNAP</span>
   <span style="text-align:center">COTE</span>
-  <span style="text-align:center;color:var(--green);font-size:14px;letter-spacing:1.5px;text-shadow:0 0 6px rgba(31,212,126,.3)">CHUTE</span>
+  <span style="text-align:center;color:var(--green);font-size:10px;letter-spacing:1px;text-shadow:0 0 6px rgba(31,212,126,.3)">CHUTE</span>
 </div>
 
 <!-- PARTICIPANTS LIST -->
