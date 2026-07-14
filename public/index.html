@@ -63,7 +63,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   body { font-size: 15px; }
   .logo { font-size: 23px; letter-spacing: 2px; }
   .logo-horse { font-size: 23px; }
-  #race-name { font-size: 16px; }
+  #race-name { font-size: 19px; }
   .cd-mini { font-size: 25px; }
   .hname { font-size: 15px; }
   .cdirect { font-size: 18px; }
@@ -169,7 +169,7 @@ button { touch-action: manipulation; } /* tap instantané, pas de double-tap zoo
   margin-bottom: 1px;
 }
 #race-name {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -1068,7 +1068,7 @@ function renderRaceView() {
 
   document.getElementById('race-code').textContent    = `R${meta.reunion} · C${meta.course}`;
   document.getElementById('race-name').textContent    = `${meta.hip ? meta.hip + ' — ' : ''}${meta.libelle}`;
-  document.getElementById('race-sub').textContent     = (meta.disc || '') + (meta.partants ? ` (${meta.partants})` : '') + (live ? '' : '  ·  consultation (pas la course suivie en direct)');
+  document.getElementById('race-sub').textContent     = (meta.disc || '') + (meta.partants ? ` (${meta.partants} partants)` : '') + (live ? '' : '  ·  consultation (pas la course suivie en direct)');
   document.getElementById('race-counter').textContent = `${idx + 1} / ${S.programme.length}`;
 
   const secsLeft = Math.round((meta.depart - Date.now()) / 1000);
