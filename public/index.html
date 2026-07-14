@@ -761,195 +761,75 @@ window.addEventListener('unhandledrejection', function (e) {
 });
 'use strict';
 // ═══════════════════════════════════════════════════════
-//  TBlaugranaTurf — Bot de surveillance des cotes PMU
-//  Appels relayés via le proxy serveur (/api/pmu61, /api/pmu7)
-//  → plus besoin de désactiver la sécurité du navigateur.
+//  TBlaugranaTurf — FRONT DE CONSULTATION UNIQUEMENT
+//  Le moteur (snapshot, gel des cotes, chutes, Telegram)
+//  tourne exclusivement côté SERVEUR (server.js, Railway),
+//  en continu, même si aucun visiteur n'est connecté.
+//  Cette page ne fait plus AUCUN calcul ni AUCUNE requête
+//  vers l'API PMU : elle se contente d'interroger /api/state
+//  chaque seconde et d'afficher ce que le serveur renvoie.
+//  → Fermer cette page, éteindre le téléphone, etc. n'a
+//    plus AUCUN impact sur le bot : il continue de tourner
+//    sur Railway et d'envoyer les alertes Telegram.
 // ═══════════════════════════════════════════════════════
 
-// ── CONFIG ─────────────────────────────────────────────
-const PMU_BASE_PROG  = '/api/pmu61';
-const PMU_BASE_PARTS = '/api/pmu7';
+const STATE_URL   = '/api/state';
+const POLL_MS      = 1000;   // lecture de l'état serveur (léger : juste de la mémoire côté serveur)
+const PROG_STALE_MS = 5 * 60 * 1000; // au-delà, on considère l'état "perdu la connexion"
 
 const CFG = {
-  progRefreshSecs:  120,   // intervalle de rafraîchissement du programme (secondes)
-  snapSecs:         0,     // snapshot automatique N secondes avant le départ (0 = à l'heure réelle du départ)
-  fetchTimeoutMs:   1500,  // timeout d'une requête API (ms)
-  parallelFetches:  1,     // nb de requêtes en parallèle (racing pattern)
-                           // (passé de 2 à 1 : avec une latence déjà basse (~15-20ms),
-                           //  le racing pattern n'apporte presque rien et double
-                           //  inutilement la charge envoyée à l'API PMU, ce qui
-                           //  semble déclencher un rate-limit périodique côté serveur)
-  progCacheTtlMs:   90000, // durée de vie du cache programme JS (ms)
-  maxAlerts:        3,     // nb maximum d'alertes conservées (les 3 dernières)
-
-  // ── VITESSE DE RAFRAÎCHISSEMENT ADAPTATIVE ─────────────
-  // Le cycle se resserre automatiquement à mesure qu'on approche du
-  // départ : pas la peine de taper l'API à 1 req/s quand la course
-  // est dans 10 minutes (charge inutile, risque de rate-limit), mais
-  // dans les 60 dernières secondes chaque cote compte → on accélère.
-  cycleFarMs:    3000,  // > farThresholdSecs avant le départ
-  cycleMidMs:    1000,  // entre hotThresholdSecs et farThresholdSecs
-  cycleHotMs:    400,   // entre ultraThresholdSecs et hotThresholdSecs
-  cycleUltraMs:  250,   // < ultraThresholdSecs avant le départ (dernier sprint)
-  farThresholdSecs:   300,  // 5 min
-  hotThresholdSecs:   60,   // 1 min
-  ultraThresholdSecs: 15,   // 15 sec — la fenêtre la plus critique
-  raceParallelHot:   2,    // nb requêtes en parallèle en fenêtre HOT (racing pattern)
-  raceParallelUltra: 3,    // nb requêtes en parallèle en fenêtre ULTRA
-  raceParallelCold:  1,    // nb requêtes en parallèle hors fenêtre chaude (suffisant, évite la charge ×2 en continu)
-
-  // ── BASCULE AUTO BASÉE SUR LE GEL RÉEL DES COTES ───────
-  // (et non plus sur un délai fixe après l'heure PRÉVUE de départ,
-  //  qui bug si la course démarre en retard suite à un incident)
-  oddsStableMs:      30000,  // durée sans changement de cotes pour confirmer le gel (ms)
-                             // (15s d'origine = trop court, faux gel pendant un retard ;
-                             // 90s testé = trop strict, gel jamais atteint si les cotes
-                             // ont un peu de bruit résiduel ; 30s = compromis)
-  switchAfterFreezeMs: 240000, // bascule N ms après le gel confirmé (ms) = 4 min
-  maxWaitAfterDepartMs: 1200000, // sécurité anti-blocage : si 20 min après l'heure prévue
-                                 // le gel n'est toujours pas détecté (course annulée, bug API…),
-                                 // on bascule de force pour ne pas rester coincé
-
-  // ── TELEGRAM ──────────────────────────────────────────
-  // Notifications envoyées quand un cheval chute de DROP_PCT% ou plus,
-  // UNIQUEMENT dans les snapSecs secondes avant le départ,
-  // et seulement si la cote FINALE est <= tgMaxCote (peu importe la cote snap).
-  tgToken:    '8961502220:AAGlpLomYVMXRQgrJsPp5M4m-omFPJPBKoU',
-  tgChatIds:  ['625118343', '8288460384'],
-  tgMaxCote:  10,    // cote finale maximale pour déclencher la notif Telegram
+  fetchTimeoutMs: 4000,
+  maxAlerts:      3,
 };
 
-// ── ÉTAT GLOBAL ─────────────────────────────────────────
+// ── ÉTAT GLOBAL (miroir de /api/state, rien n'est calculé localement) ──
 let S = {
-  today:       '',
-  programme:   [],
-  curIdx:      -1,
-  curRaceIdx:  -1,   // index de la course "active" en mode AUTO (avance uniquement quand le gel réel est confirmé)
-  manualIdx:   -1,   // -1 = mode AUTO
-  lastOddsChangeAt: null, // timestamp du dernier changement de cotes réellement observé
-  oddsFrozenAt:     null, // timestamp où le gel des cotes a été confirmé (null = pas encore figées)
+  today:        '',
+  programme:    [],   // métadonnées de toutes les courses du jour (vient du serveur)
+  curRaceIdx:   -1,   // course actuellement suivie EN DIRECT par le bot serveur
+  manualIdx:    -1,   // -1 = on suit automatiquement la course du bot ; sinon on "consulte" une autre course de la liste (infos seulement, pas de cotes live)
+  race:         null,
   participants: [],
-  snapCotes:   {},
-  snapDone:    false,
-  alertedDrop: new Set(),
-  alertCount:  0,
-  audioOn:     true,
-  tgOn:        true,  // notifications Telegram activées
-  hideRising:  false, // masque les chevaux dont la cote augmente (chute négative)
-  hideNonPartants: true, // masque les chevaux déclarés non-partants
-  tick:        0,
-  lastFetchMs: 0,
-};
-
-// ── PARAMÈTRES PAR DÉFAUT (pour le bouton "Réinitialiser") ──
-const DEFAULTS = {
-  dropPct:         25,
-  maxCote:         10,
-  snapSecs:        0,
-  progRefreshSecs: 120,
-  maxAlerts:       3,
-  tgMaxCote:       10,
-  tgToken:         '8961502220:AAGlpLomYVMXRQgrJsPp5M4m-omFPJPBKoU',
-  tgChatIds:       ['625118343', '8288460384'],
-  audioOn:         true,
-  tgOn:            true,
+  snapCotes:    {},
+  snapDone:     false,
+  oddsFrozenAt: null,
+  alertedDrop:  new Set(),
+  alertCount:   0,
+  audioOn:      true,
   hideRising:      false,
   hideNonPartants: true,
+  tick:         0,
+  lastStateOk:  0,
 };
 
-// ── PARAMÈTRES SAUVEGARDÉS (localStorage) ──────────────
-// Persiste les réglages d'une session à l'autre, sur cette machine.
-const SETTINGS_KEY = 'tblaugranaturf_settings_v1';
-
-// ── CACHE PROGRAMME ─────────────────────────────────────
-const _progCache = {};  // { dateStr -> { ts, data } }
-
-// ── GÉNÉRATION FETCH (pour invalider cotesLoop à la volée) ──
-let _fetchGeneration = 0;
-
-// ── LATENCE + TIMEOUT ADAPTATIF ─────────────────────────
-// On garde un historique glissant des 10 derniers temps de réponse.
-// Le timeout de la prochaine requête = max(300ms, avg*3).
-// Avantage : si l'API répond en 150ms en moyenne, on abandonne à 450ms
-// au lieu d'attendre 1500ms — les requêtes mortes libèrent la boucle 3× plus vite.
-let _latencyHistory = [];
-function addLatency(ms) {
-  _latencyHistory.push(ms);
-  if (_latencyHistory.length > 10) _latencyHistory.shift();
-}
-function avgLatency() {
-  if (!_latencyHistory.length) return 0;
-  return Math.round(_latencyHistory.reduce((a, b) => a + b, 0) / _latencyHistory.length);
-}
-function adaptiveTimeout() {
-  const avg = avgLatency();
-  // Pas assez d'historique → timeout par défaut
-  if (_latencyHistory.length < 3) return CFG.fetchTimeoutMs;
-  // avg * 4, mais borné entre 600ms et CFG.fetchTimeoutMs
-  // (plancher relevé de 300 → 600ms : 300ms coupait des requêtes valides
-  //  dès qu'un simple pic de latence réseau dépassait ce seuil, provoquant
-  //  des "TIMEOUT" alors que l'API aurait répondu correctement juste après)
-  return Math.min(CFG.fetchTimeoutMs, Math.max(600, avg * 4));
-}
-
-// ── HASH LÉGER POUR DÉTECTER LES DONNÉES IDENTIQUES ─────
-// Évite de re-parser + re-render si l'API n'a rien changé.
-// On compare juste les cotes de chaque partant : rapide et suffisant.
-let _lastPartsHash = '';
-function hashParts(parts) {
-  // Concatène numPmu:rapport pour tous les partants → string unique
-  return parts
-    .filter(p => p.statut === 'PARTANT' && p.dernierRapportDirect)
-    .map(p => `${p.numPmu}:${p.dernierRapportDirect.rapport}`)
-    .join(',');
-}
-
-// ── CACHE ETAG ───────────────────────────────────────────
-// Stocke le dernier ETag reçu par URL.
-// Si l'API renvoie 304 Not Modified → pas de body à transférer → ~3× plus rapide.
-// Note : fonctionne seulement si l'API PMU envoie des headers ETag/Cache-Control.
-const _etags = {};  // { url -> etag }
-
-// ── UTILS GÉNÉRAUX ──────────────────────────────────────
-const pad = n => String(n).padStart(2, '0');
-function dateStr(d) {
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-}
+// ── UTILS TEMPS ─────────────────────────────────────────
 function timeNow() {
-  const n = new Date();
-  return `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
 }
 function fmtCd(s) {
-  if (s < 0) {
-    const elapsed = Math.abs(s);
-    const m = Math.floor(elapsed / 60);
-    const sec = elapsed % 60;
-    return m > 0 ? `+${m}m${pad(sec)}s` : `+${sec}s`;
-  }
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return h > 0 ? `${h}h${pad(m)}` : `${pad(m)}:${pad(sec)}`;
+  const neg = s < 0;
+  const a = Math.abs(s);
+  const h = Math.floor(a / 3600), m = Math.floor((a % 3600) / 60), sec = a % 60;
+  const str = h > 0
+    ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+    : `${m}:${String(sec).padStart(2,'0')}`;
+  return neg ? `+${str}` : str;
 }
+
 function getMaxCote()  { const v = parseFloat(document.getElementById('max-cote').value);       return isNaN(v) ? 9999 : v; }
 function getDropPct()  { const v = parseFloat(document.getElementById('drop-pct-input').value); return isNaN(v) ? 25   : v; }
 
-// Tronque le nom du cheval à N caractères pour ne plus décaler les colonnes
-// (le nom complet reste consultable au survol via l'attribut title)
 const HORSE_NAME_MAX_LEN = 12;
 function truncName(nom) {
   if (!nom) return '';
-  return nom.length > HORSE_NAME_MAX_LEN
-    ? nom.slice(0, HORSE_NAME_MAX_LEN) + '…'
-    : nom;
+  return nom.length > HORSE_NAME_MAX_LEN ? nom.slice(0, HORSE_NAME_MAX_LEN - 1) + '…' : nom;
 }
 
-// ── AUDIO ───────────────────────────────────────────────
-// Un seul AudioContext réutilisé pour éviter le blocage autoplay navigateur.
+// ── SON ─────────────────────────────────────────────────
 let _ac = null;
 function getAC() {
   if (!_ac) _ac = new (window.AudioContext || window.webkitAudioContext)();
-  if (_ac.state === 'suspended') _ac.resume();
   return _ac;
 }
 document.addEventListener('click', () => { try { getAC(); } catch (_) {} }, { once: true });
@@ -957,51 +837,22 @@ document.addEventListener('click', () => { try { getAC(); } catch (_) {} }, { on
 function beep(freq = 880, dur = 150, type = 'sine') {
   if (!S.audioOn) return;
   try {
-    const ctx = getAC();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
+    const ac = getAC();
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
     osc.type = type;
     osc.frequency.value = freq;
-    gain.gain.setValueAtTime(.22, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + dur / 1000);
+    gain.gain.setValueAtTime(0.15, ac.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur / 1000);
+    osc.connect(gain).connect(ac.destination);
     osc.start();
-    osc.stop(ctx.currentTime + dur / 1000);
+    osc.stop(ac.currentTime + dur / 1000);
   } catch (_) {}
 }
+function alertBeep() { beep(1046, 180, 'square'); setTimeout(() => beep(1318, 180, 'square'), 140); }
+function snapBeep()  { beep(660, 120, 'sine'); }
 
-function alertBeep() {
-  beep(1100, 80);
-  setTimeout(() => beep(880, 100), 130);
-  setTimeout(() => beep(1300, 220), 290);
-}
-
-function snapBeep() {
-  if (!S.audioOn) return;
-  try {
-    const ctx = getAC();
-    const t = ctx.currentTime;
-    const notes = [[660, 0], [880, .2], [1100, .42]];
-    notes.forEach(([freq, delay]) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.type = 'square'; o.frequency.value = freq;
-      g.gain.setValueAtTime(.18, t + delay);
-      g.gain.exponentialRampToValueAtTime(.001, t + delay + .28);
-      o.start(t + delay); o.stop(t + delay + .3);
-    });
-  } catch (_) {}
-}
-
-// ── FORMAT DATE PMU ─────────────────────────────────────
-function datePmu(yyyymmdd) {
-  // YYYYMMDD → DDMMYYYY  ex: 20260601 → 01062026
-  return yyyymmdd.slice(6, 8) + yyyymmdd.slice(4, 6) + yyyymmdd.slice(0, 4);
-}
-
-// ── FETCH AVEC TIMEOUT ──────────────────────────────────
+// ── FETCH AVEC TIMEOUT ───────────────────────────────────
 async function fetchWithTimeout(url, opts = {}, ms = CFG.fetchTimeoutMs) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
@@ -1015,202 +866,69 @@ async function fetchWithTimeout(url, opts = {}, ms = CFG.fetchTimeoutMs) {
   }
 }
 
-// ── CHARGEMENT PROGRAMME ────────────────────────────────
-// ── DÉTECTION DES ANNULATIONS ────────────────────────────
-// L'API PMU expose un champ "statut" (sur la course et/ou la réunion)
-// qui passe à une valeur du type "COURSE_ANNULEE" / "REUNION_ANNULEE"
-// en cas d'annulation. On teste de façon souple (contient "ANNULE")
-// pour rester robuste si la valeur exacte varie selon les cas.
-// ⚠️ Non vérifié en conditions réelles (accès direct à l'API PMU
-// impossible depuis l'environnement où ce code a été écrit) — à
-// confirmer sur une vraie annulation. Si ça ne filtre pas, dis-le moi :
-// il suffit d'ouvrir les DevTools (F12 → Network) sur une réunion
-// annulée et de regarder le nom exact du champ dans la réponse JSON.
-function isAnnulee(obj) {
-  const s = obj?.statut || obj?.statutCourse || obj?.statutReunion || '';
-  return typeof s === 'string' && s.toUpperCase().includes('ANNULE');
-}
-
-// ⚠️ Filtre "courses françaises uniquement" — même logique que côté
-// serveur (voir server.js), non vérifiée en conditions réelles. Si des
-// courses étrangères passent encore le filtre, dis-le moi.
-function isFrench(reunion) {
-  const p = reunion?.pays;
-  if (!p) return true;
-  const code = (p.code || '').toUpperCase();
-  const lib  = (p.libelle || '').toUpperCase();
-  if (['FRA', 'FR', 'FRANCE'].includes(code)) return true;
-  if (lib === 'FRANCE') return true;
-  return !code && !lib;
-}
-
-async function loadProg() {
-  // IMPORTANT : ne PAS réécrire S.today si elle est déjà définie.
-  // Avant, loadProg() forçait S.today = aujourd'hui à chaque appel, y
-  // compris lors du rafraîchissement périodique (toutes les progRefreshSecs).
-  // Si le programme du jour était vide et qu'on avait basculé sur le
-  // programme de demain (voir boot()), ce rafraîchissement écrasait S.today
-  // et revenait charger la date d'aujourd'hui (vide) → "le programme ne se
-  // met plus à jour" / mauvaise journée affichée.
-  if (!S.today) S.today = dateStr(new Date());
-  setLoadSub('CHARGEMENT DU PROGRAMME...');
-  try {
-    const cached = _progCache[S.today];
-    let data;
-    if (cached && (Date.now() - cached.ts) < CFG.progCacheTtlMs) {
-      data = cached.data;
-    } else {
-      const url = `${PMU_BASE_PROG}/programme/${datePmu(S.today)}?specialisation=OFFLINE`;
-      const r = await fetchWithTimeout(url, { cache: 'no-store' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      data = await r.json();
-      _progCache[S.today] = { ts: Date.now(), data };
-    }
-
-    const races = [];
-    const reunions = data?.programme?.reunions || [];
-    let nbAnnulees = 0;
-    let nbEtrangeres = 0;
-    for (const ru of reunions) {
-      if (isAnnulee(ru)) { nbAnnulees += (ru.courses || []).length; continue; }
-      if (!isFrench(ru)) { nbEtrangeres += (ru.courses || []).length; continue; }
-      const hip = ru.hippodrome?.libelleCourt || ru.hippodrome?.libelleLong || `R${ru.numOfficiel}`;
-      for (const co of (ru.courses || [])) {
-        if (isAnnulee(co)) { nbAnnulees++; continue; }
-        races.push({
-          reunion: ru.numOfficiel,
-          course:  co.numOrdre,
-          depart:  co.heureDepart,
-          libelle: co.libelle || co.libelleCourt || `Course ${co.numOrdre}`,
-          hip,
-          disc: co.discipline || co.specialite || '',
-        });
-      }
-    }
-
-    S.programme = races.sort((a, b) => a.depart - b.depart);
-    S.lastProg = Date.now();
-    setStatus(true);
-
-    if (nbAnnulees > 0) addAlert('prog', '🚫', `${nbAnnulees} course(s) annulée(s) masquée(s)`);
-    if (nbEtrangeres > 0) addAlert('prog', '🌍', `${nbEtrangeres} course(s) étrangère(s) masquée(s)`);
-
-    if (races.length > 0) {
-      addAlert('prog', '📋', `Programme : ${races.length} courses dans ${reunions.length} réunions`);
-      return true;
-    }
-    return false;
-  } catch (e) {
-    addAlert('prog', '⚠️', `Programme : ${e.message}`);
-    setStatus(false);
-    return false;
-  }
-}
-
-// ── CHARGEMENT PARTICIPANTS (fallback mono-requête) ─────
-async function loadParts(reunion, course) {
-  const url = `${PMU_BASE_PARTS}/programme/${datePmu(S.today)}/R${reunion}/C${course}/participants?specialisation=OFFLINE`;
-  const r = await fetchWithTimeout(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const data = await r.json();
-  return data.participants || [];
-}
-
-// ── TROUVER LA COURSE DE DÉPART (sélection initiale / fallback uniquement) ─
-// N'intervient plus dans la bascule en continu (voir autoSwitch + gel réel
-// des cotes ci-dessous) : sert seulement à choisir une course de départ
-// raisonnable au boot, ou si l'index courant devient invalide (ex: reload
-// du programme qui change sa taille).
-function findNext() {
-  const now = Date.now();
-  // Première course non encore partie depuis +5min
-  for (let i = 0; i < S.programme.length; i++) {
-    if (S.programme[i].depart >= now - 300_000) return i;
-  }
-  return Math.max(0, S.programme.length - 1);
-}
-
+// ── NAVIGATION (consultation seule — ne touche jamais au bot) ──
 function effectiveIdx() {
-  if (S.manualIdx >= 0) return S.manualIdx;
-  if (S.curRaceIdx < 0 || S.curRaceIdx >= S.programme.length) {
-    S.curRaceIdx = findNext();
-  }
+  if (S.manualIdx >= 0 && S.manualIdx < S.programme.length) return S.manualIdx;
   return S.curRaceIdx;
 }
-function isAuto()       { return S.manualIdx < 0; }
+function isLiveRace(idx) { return idx === S.curRaceIdx; }
 
-// ── CHANGEMENT DE COURSE ────────────────────────────────
-function onRaceChange() {
-  S.snapDone = false;
-  S.snapCotes = {};
-  S.alertedDrop.clear();
-  S.participants = [];
-  S.lastOddsChangeAt = Date.now(); // reset : on repart d'une cote "vue à l'instant"
-  S.oddsFrozenAt = null;            // pas encore figées pour cette nouvelle course
-  document.getElementById('snap-badge').style.display = 'none';
-  document.getElementById('participants').innerHTML = '';
-  document.getElementById('prog-fill').style.width = '0%';
-  // Invalide la boucle courante et en lance une nouvelle
-  cotesLoop();
+function updateNav() {
+  const idx = effectiveIdx();
+  const len = S.programme.length;
+  document.getElementById('btn-prev').disabled = idx <= 0;
+  document.getElementById('btn-next').disabled = idx >= len - 1;
 }
 
-// ── SNAPSHOT ────────────────────────────────────────────
-function doSnapshot(force = false) {
-  if (S.snapDone && !force) return;
-  S.snapDone = true;
-  S.snapCotes = {};
-  for (const p of S.participants) {
-    if (p.statut === 'PARTANT' && p.dernierRapportDirect)
-      S.snapCotes[p.numPmu] = p.dernierRapportDirect.rapport;
+document.getElementById('btn-prev').onclick = () => {
+  const i = effectiveIdx();
+  if (i > 0) { S.manualIdx = i - 1; renderRaceView(); updateNav(); }
+};
+document.getElementById('btn-next').onclick = () => {
+  const i = effectiveIdx();
+  if (i < S.programme.length - 1) { S.manualIdx = i + 1; renderRaceView(); updateNav(); }
+};
+document.getElementById('audio-btn').onclick = () => {
+  S.audioOn = !S.audioOn;
+  const btn = document.getElementById('audio-btn');
+  btn.className = S.audioOn ? 'on' : '';
+  btn.textContent = S.audioOn ? '🔔 SON' : '🔕 SON OFF';
+  if (S.audioOn) beep(880, 120);
+};
+// Les notifications Telegram sont envoyées uniquement par le serveur
+// (server.js), en continu, qu'un visiteur soit connecté ou non.
+// Ce bouton n'a donc plus d'action à faire ici — il est conservé
+// uniquement comme rappel visuel de l'état (toujours actif côté bot).
+const tgBtn = document.getElementById('tg-btn');
+if (tgBtn) {
+  tgBtn.title = 'Géré côté serveur — toujours actif';
+  tgBtn.onclick = () => {
+    addAlert('info', 'ℹ️', 'Telegram est géré par le bot serveur (Railway), toujours actif — rien à activer ici.');
+  };
+}
+document.getElementById('tg-test-btn').onclick = async () => {
+  addAlert('info', '🧪', 'Test Telegram en cours...');
+  const apiBase = `https://api.telegram.org/bot${'8961502220:AAGlpLomYVMXRQgrJsPp5M4m-omFPJPBKoU'}/sendMessage`;
+  const chatIds = ['625118343', '8288460384'];
+  const text = `🧪 *Test TBlaugranaTurf*\nConnexion Telegram OK ✅\n${new Date().toLocaleTimeString('fr-FR')}`;
+  for (const chatId of chatIds) {
+    try {
+      const r    = await fetch(apiBase, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
+      });
+      const json = await r.json();
+      if (r.ok && json.ok) {
+        addAlert('info', '✅', `Test OK → chat ${chatId}`);
+      } else {
+        addAlert('info', '❌', `Test ÉCHEC chat ${chatId} : ${json.description || r.status}`);
+      }
+    } catch (e) {
+      addAlert('info', '❌', `Test EXCEPTION chat ${chatId} : ${e.message}`);
+    }
   }
-  S.alertedDrop.clear();
-  document.getElementById('snap-badge').style.display = 'block';
-  addAlert('snap', '📸', `SNAPSHOT${force ? ' MANUEL' : ''} — ${Object.keys(S.snapCotes).length} chevaux`);
-  snapBeep();
-  renderTable();
-}
-
-// ── TELEGRAM ─────────────────────────────────────────────
-// L'envoi Telegram est désormais géré côté SERVEUR (server.js),
-// qui tourne en continu même si personne n'est connecté à cette
-// page. Le front ne fait plus que de l'affichage / des alertes
-// sonores locales — plus aucun envoi Telegram n'est déclenché
-// depuis le navigateur (ça évite les notifications en double si
-// plusieurs personnes ont la page ouverte en même temps).
-
-// ── DÉTECTION DES CHUTES ────────────────────────────────
-function checkDrops() {
-  if (!S.snapDone) return;
-  const minPct   = getDropPct();
-  const maxUI    = getMaxCote();      // filtre d'affichage UI
-  const race     = S.programme[effectiveIdx()];
-  const secsLeft = Math.round((race.depart - Date.now()) / 1000);
-
-  // Alerte visible tant que le bot suit cette course côté serveur
-  // (voir server.js — plus de plafond fixe de 2 min).
-  if (secsLeft > CFG.snapSecs) return;   // trop tôt, snapshot pas encore pris
-
-  for (const p of S.participants) {
-    if (p.statut !== 'PARTANT' || !p.dernierRapportDirect) continue;
-    const snap = S.snapCotes[p.numPmu];
-    const cur  = p.dernierRapportDirect.rapport;
-    if (!snap) continue;
-
-    const drop = (snap - cur) / snap * 100;
-    if (drop < minPct || S.alertedDrop.has(p.numPmu)) continue;
-
-    // Filtre UI : cote finale <= max affiché
-    if (cur > maxUI) continue;
-
-    S.alertedDrop.add(p.numPmu);
-    addAlert('drop', '🔥', `${p.nom} — ${snap} → ${cur} (−${drop.toFixed(0)}%)`);
-    alertBeep();
-
-    const row = document.getElementById(`row-${p.numPmu}`);
-    if (row) { row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 900); }
-    // (l'envoi Telegram est géré côté serveur — voir server.js)
-  }
-}
+};
 
 // ── RENDU TABLE (mise à jour différentielle) ────────────
 function renderTable() {
@@ -1220,7 +938,7 @@ function renderTable() {
 
   const getDrop = p => {
     const snap = S.snapCotes[p.numPmu];
-    const cd   = p.dernierRapportDirect?.rapport;
+    const cd   = p.dernierRapportDirect?.rapport ?? p.cote;
     return (snap != null && cd != null) ? (snap - cd) / snap * 100 : -9999;
   };
 
@@ -1229,23 +947,24 @@ function renderTable() {
     if (da !== -9999 && db !== -9999) return db - da;
     if (da !== -9999) return -1;
     if (db !== -9999) return 1;
-    return (a.dernierRapportDirect?.rapport ?? 9999) - (b.dernierRapportDirect?.rapport ?? 9999);
+    const ca = a.dernierRapportDirect?.rapport ?? a.cote ?? 9999;
+    const cb = b.dernierRapportDirect?.rapport ?? b.cote ?? 9999;
+    return ca - cb;
   });
 
   const visible = sorted.filter(p => {
     if (S.hideNonPartants && p.statut === 'NON_PARTANT') return false;
-    if ((p.dernierRapportDirect?.rapport ?? 9999) > maxCote) return false;
+    const cote = p.dernierRapportDirect?.rapport ?? p.cote ?? 9999;
+    if (cote > maxCote) return false;
     if (S.hideRising) {
       const snap = S.snapCotes[p.numPmu];
-      const cd   = p.dernierRapportDirect?.rapport;
-      // N'appliquer le filtre qu'après le snap ET si la cote a réellement augmenté
+      const cd   = p.dernierRapportDirect?.rapport ?? p.cote;
       if (snap != null && cd != null && cd > snap) return false;
     }
     return true;
   });
   const visIds  = new Set(visible.map(p => `row-${p.numPmu}`));
 
-  // Retire les lignes disparues
   for (const row of [...container.children]) {
     if (!visIds.has(row.id)) row.remove();
   }
@@ -1254,11 +973,10 @@ function renderTable() {
     const p   = visible[i];
     const np  = p.statut === 'NON_PARTANT';
     const fav = p.dernierRapportDirect?.favoris;
-    const cd  = p.dernierRapportDirect?.rapport ?? '—';
+    const cd  = p.dernierRapportDirect?.rapport ?? p.cote ?? '—';
     const snap = S.snapCotes[p.numPmu];
     const cs  = snap ?? '—';
 
-    // Calcul cote couleur + variation
     let dropTxt = '', dropClass = '';
     if (snap != null && cd !== '—') {
       const dr = (snap - cd) / snap * 100;
@@ -1288,7 +1006,6 @@ function renderTable() {
         `<span class="cdrop ${dropClass}">${dropTxt || '—'}</span>`;
       container.appendChild(row);
     } else {
-      // Mise à jour différentielle — ne touche que les cellules modifiées
       const cells   = row.children;
       const celSnap = cells[2];
       const celCD   = cells[3];
@@ -1306,10 +1023,8 @@ function renderTable() {
       if (celDrop.className !== dc) celDrop.className = dc;
     }
 
-    // Highlight persistant si déjà alerté
     row.classList.toggle('alerted', S.alertedDrop.has(p.numPmu));
 
-    // Reorder si nécessaire
     if (container.children[i] !== row) container.insertBefore(row, container.children[i] || null);
   }
 }
@@ -1321,7 +1036,6 @@ function addAlert(type, icon, msg) {
   item.className = `aitem ${type}`;
   item.innerHTML = `<span class="atime">${timeNow()}</span><span class="aicon">${icon}</span><span class="amsg">${msg}</span>`;
   list.prepend(item);
-  // Purge les vieilles alertes
   while (list.children.length > CFG.maxAlerts) list.removeChild(list.lastChild);
   if (type !== 'info' && type !== 'prog') {
     S.alertCount++;
@@ -1345,154 +1059,24 @@ function setLoadSub(t) {
   if (e) e.textContent = t;
 }
 
-// ── NAVIGATION ──────────────────────────────────────────
-function updateNav() {
-  const idx = effectiveIdx();
-  const len = S.programme.length;
-  document.getElementById('btn-prev').disabled = idx <= 0;
-  document.getElementById('btn-next').disabled = idx >= len - 1;
-}
-
-document.getElementById('btn-prev').onclick = () => {
-  const i = effectiveIdx();
-  if (i > 0) { S.manualIdx = i - 1; onRaceChange(); updateNav(); }
-};
-document.getElementById('btn-next').onclick = () => {
-  const i = effectiveIdx();
-  if (i < S.programme.length - 1) { S.manualIdx = i + 1; onRaceChange(); updateNav(); }
-};
-document.getElementById('audio-btn').onclick = () => {
-  S.audioOn = !S.audioOn;
-  try { getAC(); } catch (_) {}
-  const btn = document.getElementById('audio-btn');
-  btn.className = S.audioOn ? 'on' : '';
-  btn.textContent = S.audioOn ? '🔔 SON' : '🔕 MUET';
-  if (S.audioOn) beep(880, 120);
-};
-document.getElementById('tg-btn').onclick = () => {
-  S.tgOn = !S.tgOn;
-  const btn = document.getElementById('tg-btn');
-  btn.className = S.tgOn ? 'on' : '';
-  btn.textContent = S.tgOn ? '✈️ TG' : '✈️ TG OFF';
-  addAlert('info', S.tgOn ? '✈️' : '🔕', `Telegram ${S.tgOn ? 'activé' : 'désactivé'}`);
-};
-document.getElementById('tg-test-btn').onclick = async () => {
-  addAlert('info', '🧪', 'Test Telegram en cours...');
-  const apiBase = `https://api.telegram.org/bot${CFG.tgToken}/sendMessage`;
-  const text = `🧪 *Test TBlaugranaTurf*\nConnexion Telegram OK ✅\n${new Date().toLocaleTimeString('fr-FR')}`;
-  for (const chatId of CFG.tgChatIds) {
-    try {
-      const r    = await fetch(apiBase, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
-      });
-      const json = await r.json();
-      if (r.ok && json.ok) {
-        addAlert('info', '✅', `Test OK → chat ${chatId}`);
-      } else {
-        addAlert('info', '❌', `Test ÉCHEC chat ${chatId} : ${json.description || r.status}`);
-      }
-    } catch (e) {
-      addAlert('info', '❌', `Test EXCEPTION chat ${chatId} : ${e.message}`);
-    }
-  }
-};
-
-// ── AUTO-SWITCH ─────────────────────────────────────────
-// Bascule sur la course suivante UNIQUEMENT quand le gel réel des cotes
-// a été confirmé (cf. cotesLoop) depuis CFG.switchAfterFreezeMs (4 min).
-// Sécurité anti-blocage : si rien n'est détecté CFG.maxWaitAfterDepartMs
-// après l'heure prévue (course annulée, données manquantes, bug API…),
-// on bascule de force pour ne pas rester coincé indéfiniment.
-function autoSwitch() {
-  if (!isAuto()) return;
+// ── RENDU DE LA VUE COURSE (à partir du miroir S, jamais de calcul) ──
+function renderRaceView() {
   if (S.programme.length === 0) return;
-
-  // Pas encore de course "active" en auto, ou index devenu invalide
-  // (ex: le programme a changé de taille) → on en choisit une nouvelle
-  // et on repart sur un suivi de gel propre pour cette course.
-  if (S.curRaceIdx < 0 || S.curRaceIdx >= S.programme.length) {
-    S.curRaceIdx = findNext();
-    onRaceChange();
-    return;
-  }
-
-  // Dernière course du programme : rien après, on ne bascule plus.
-  if (S.curRaceIdx >= S.programme.length - 1) return;
-
-  const race = S.programme[S.curRaceIdx];
-  const now  = Date.now();
-
-  let shouldSwitch = false;
-  if (S.oddsFrozenAt !== null) {
-    shouldSwitch = (now - S.oddsFrozenAt) >= CFG.switchAfterFreezeMs;
-  } else if ((now - race.depart) >= CFG.maxWaitAfterDepartMs) {
-    // Sécurité : gel jamais détecté trop longtemps après l'heure prévue.
-    shouldSwitch = true;
-    addAlert('info', '⚠️', 'Gel des cotes non détecté — bascule forcée (sécurité)');
-  }
-
-  if (shouldSwitch) {
-    S.curRaceIdx++;
-    onRaceChange();
-  }
-}
-
-// ── TICK SECONDAIRE (UI + programme) ────────────────────
-// ── SYNCHRO SNAPSHOT SERVEUR ─────────────────────────────
-// Le serveur (server.js) prend son propre snapshot à T0 en continu,
-// même si personne n'est connecté. Cette fonction récupère cet état
-// et l'adopte si la course suivie côté serveur correspond à celle
-// affichée ici — utile pour un visiteur qui se connecte APRÈS le
-// départ : il récupère directement le snapshot pris pendant son
-// absence, au lieu d'en prendre un (faux) localement, trop tard.
-async function syncServerState(race) {
-  try {
-    const r = await fetchWithTimeout('/api/state', {}, 1500);
-    if (!r.ok) return;
-    const data = await r.json();
-    if (!data.race || !race) return;
-    if (data.race.reunion !== race.reunion || data.race.course !== race.course) return;
-
-    if (data.snapDone) {
-      S.snapDone = true;
-      document.getElementById('snap-badge').style.display = 'block';
-      for (const p of data.participants) {
-        if (p.snap != null) S.snapCotes[p.numPmu] = p.snap;
-        if (p.alerted) S.alertedDrop.add(p.numPmu);
-      }
-    }
-  } catch (_) { /* échec silencieux — on retentera au tick suivant */ }
-}
-
-async function tick() {
-  S.tick++;
-  if (S.programme.length === 0) return;
-
-  autoSwitch();
   const idx  = effectiveIdx();
-  S.curIdx   = idx;
-  const race = S.programme[idx];
-  const secsLeft = Math.round((race.depart - Date.now()) / 1000);
+  const meta = S.programme[idx];
+  if (!meta) return;
+  const live = isLiveRace(idx);
 
-  // Récupère le snapshot pris par le SERVEUR à T0 (utile si on se
-  // connecte après le départ : le serveur a déjà pris le snapshot
-  // pendant qu'on n'était pas là).
-  syncServerState(race);
-
-  // Mise à jour UI course
-  document.getElementById('race-code').textContent    = `R${race.reunion} · C${race.course}`;
-  document.getElementById('race-name').textContent    = `${race.hip ? race.hip + ' — ' : ''}${race.libelle}`;
-  document.getElementById('race-sub').textContent     = race.disc;
+  document.getElementById('race-code').textContent    = `R${meta.reunion} · C${meta.course}`;
+  document.getElementById('race-name').textContent    = `${meta.hip ? meta.hip + ' — ' : ''}${meta.libelle}`;
+  document.getElementById('race-sub').textContent     = meta.disc + (live ? '' : '  ·  consultation (pas la course suivie en direct)');
   document.getElementById('race-counter').textContent = `${idx + 1} / ${S.programme.length}`;
 
-  // Countdown (race bar original)
+  const secsLeft = Math.round((meta.depart - Date.now()) / 1000);
   const cd = document.getElementById('countdown');
   cd.textContent = fmtCd(secsLeft);
   cd.className = secsLeft < 0 ? '' : secsLeft <= 30 ? 'crit' : secsLeft <= 120 ? 'warn' : '';
 
-  // Countdown mini (filter bar)
   const cdMini = document.getElementById('countdown-mini');
   const cdLabel = document.getElementById('cd-label-mini');
   if (cdMini) {
@@ -1500,334 +1084,125 @@ async function tick() {
     cdMini.className = 'cd-mini' + (secsLeft < 0 ? ' elapsed' : secsLeft <= 30 ? ' crit' : secsLeft <= 120 ? ' warn' : '');
   }
   if (cdLabel) cdLabel.textContent = secsLeft < 0 ? 'PARTI DEPUIS' : 'DÉPART DANS';
+
   const snapMini = document.getElementById('snap-badge-mini');
-  if (snapMini) snapMini.style.display = S.snapDone ? 'inline' : 'none';
-  // ❄️ Cotes figées (gel confirmé après oddsStableMs sans changement) —
-  // meilleur indicateur disponible pour deviner que la prise de paris
-  // vient de fermer (l'API PMU n'expose pas de champ explicite "paris
-  // fermés" ; voir la remarque sur le champ departImminent).
+  if (snapMini) snapMini.style.display = (live && S.snapDone) ? 'inline' : 'none';
   const frozenMini = document.getElementById('frozen-badge-mini');
-  if (frozenMini) frozenMini.style.display = S.oddsFrozenAt !== null ? 'inline' : 'none';
+  if (frozenMini) frozenMini.style.display = (live && S.oddsFrozenAt !== null) ? 'inline' : 'none';
+  document.getElementById('snap-badge').style.display = (live && S.snapDone) ? 'block' : 'none';
 
-  // Progress bar (sur 3600s avant départ)
   const pct = Math.max(0, Math.min(100, (1 - Math.max(0, secsLeft) / 3600) * 100));
-  document.getElementById('prog-fill').style.width = pct + '%';
+  document.getElementById('prog-fill').style.width = live ? pct + '%' : '0%';
 
-  // Rafraîchissement programme (invalide le cache JS)
-  if (S.tick % CFG.progRefreshSecs === 0) {
-    // Passage à minuit / nouveau jour réel : si on avait basculé sur le
-    // programme d'un jour précédent (ex: hier, faute de courses ce jour-là)
-    // et que la vraie date du calendrier a maintenant avancé jusqu'à ou
-    // au-delà de S.today, on revient sur "aujourd'hui" pour réessayer.
-    const realToday = dateStr(new Date());
-    if (S.today && realToday > S.today) S.today = realToday;
-
-    delete _progCache[S.today];
-    const prevLen = S.programme.length;
-    await loadProg();
-    if (S.programme.length !== prevLen) updateNav();
+  if (live) {
+    renderTable();
+  } else {
+    // Course consultée mais pas suivie en direct par le bot : pas de
+    // cotes à afficher (le serveur ne suit qu'une course à la fois).
+    document.getElementById('participants').innerHTML =
+      '<div style="padding:24px 12px;text-align:center;color:var(--text3);font-size:13px">Le bot suit une autre course en ce moment.<br>Utilisez ◀ ▶ pour revenir à la course en direct.</div>';
   }
-
-  // Sécurité : si syncServerState() vient d'apporter un snapshot alors
-  // que le tableau était déjà affiché, on le rafraîchit pour montrer
-  // la colonne CHUTE à jour sans attendre le prochain changement de cote.
-  if (S.participants.length) renderTable();
 }
 
-// ── FETCH PARTICIPANTS AVEC ETAG ─────────────────────────
-// Envoie If-None-Match si on a déjà un ETag pour cette URL.
-// Si l'API répond 304 → données inchangées, on retourne null.
-// Si l'API répond 200 → on stocke le nouvel ETag et on retourne les participants.
-async function fetchPartsWithEtag(url, timeoutMs) {
-  const ctrl    = new AbortController();
-  const timerId = setTimeout(() => ctrl.abort(), timeoutMs);
-  const headers = {};
-  if (_etags[url]) headers['If-None-Match'] = _etags[url];
-
+// ── SYNCHRO ÉTAT SERVEUR (seule source de vérité) ────────
+async function syncState() {
+  let data;
   try {
-    const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal, headers });
-    clearTimeout(timerId);
-
-    if (r.status === 304) return null;  // données identiques → pas de re-render
-    if (!r.ok) {
-      const err = new Error(`HTTP ${r.status}`);
-      err.httpStatus = r.status;
-      throw err;
-    }
-
-    const etag = r.headers.get('ETag');
-    if (etag) _etags[url] = etag;
-
-    const data = await r.json();
-    return data.participants || [];
+    const r = await fetchWithTimeout(STATE_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    data = await r.json();
+    if (!data.ok) throw new Error('état serveur invalide');
   } catch (e) {
-    clearTimeout(timerId);
-    if (e.name === 'AbortError') e.isTimeout = true;
-    throw e;
+    setStatus(false);
+    document.getElementById('ts').innerHTML =
+      `⚠ ${timeNow()} <span style="color:var(--red)">${e.message}</span>`;
+    return;
   }
+
+  setStatus(true);
+  S.lastStateOk = Date.now();
+  document.getElementById('ts').innerHTML = `↻ ${timeNow()} <span style="color:#29c98a;font-weight:600">serveur OK</span>`;
+
+  const firstLoad = S.programme.length === 0 && data.programme.length > 0;
+  S.today      = data.today;
+  S.programme  = data.programme || [];
+
+  const raceChanged = data.curRaceIdx !== S.curRaceIdx;
+  S.curRaceIdx = data.curRaceIdx;
+
+  if (firstLoad) {
+    addAlert('prog', '📋', `Programme : ${S.programme.length} course(s) FR aujourd'hui`);
+  }
+  if (raceChanged && S.curRaceIdx >= 0) {
+    // Nouvelle course suivie par le bot serveur → on réaligne l'affichage
+    // (sauf si l'utilisateur consulte volontairement une autre course).
+    S.snapCotes = {};
+    S.alertedDrop = new Set();
+    S.snapDone = false;
+    S.oddsFrozenAt = null;
+    if (S.manualIdx === -1) {
+      document.getElementById('participants').innerHTML = '';
+    }
+  }
+
+  // On adopte l'état LIVE du bot (participants, snapshot, gel, alertes)
+  // uniquement quand on affiche effectivement la course suivie.
+  S.participants = data.participants || [];
+  for (const p of S.participants) {
+    if (p.snap != null) S.snapCotes[p.numPmu] = p.snap;
+  }
+
+  // Détection de nouveaux événements côté serveur → alerte locale + son
+  // (le serveur a DÉJÀ envoyé Telegram ; ceci ne fait qu'informer l'écran).
+  if (data.snapDone && !S.snapDone) {
+    S.snapDone = true;
+    addAlert('snap', '📸', `SNAPSHOT — ${S.participants.filter(p => p.snap != null).length} chevaux`);
+    snapBeep();
+  }
+  if (data.oddsFrozenAt !== null && S.oddsFrozenAt === null) {
+    S.oddsFrozenAt = data.oddsFrozenAt;
+    addAlert('info', '🧊', 'Cotes figées');
+  }
+  for (const p of S.participants) {
+    if (p.alerted && !S.alertedDrop.has(p.numPmu)) {
+      S.alertedDrop.add(p.numPmu);
+      if (p.snap != null && p.cote != null) {
+        const drop = (p.snap - p.cote) / p.snap * 100;
+        addAlert('drop', '🔥', `${p.nom} — ${p.snap} → ${p.cote} (−${drop.toFixed(0)}%)`);
+        alertBeep();
+        const row = document.getElementById(`row-${p.numPmu}`);
+        if (row) { row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 900); }
+      }
+    }
+  }
+
+  if (S.manualIdx >= 0 && S.programme.length && S.manualIdx >= S.programme.length) {
+    S.manualIdx = -1; // la liste a changé de taille, on revient au direct
+  }
+
+  updateNav();
+  renderRaceView();
 }
 
-// ── BOUCLE COTES — RYTHME FIXE 1s + RACING 2 REQ + RETRY SILENCIEUX ─
-//
-//  L'utilisateur veut un rafraîchissement fiable toutes les 1 seconde.
-//  Avec une seule requête par cycle, la latence affichée est devenue
-//  systématiquement ~300-400ms (latence réelle d'une requête simple à
-//  l'API PMU) au lieu des ~15-20ms observés avant. Ces 15-20ms n'étaient
-//  pas la latence réelle : c'était le MINIMUM de 2 requêtes lancées en
-//  parallèle (racing pattern), dont on gardait la plus rapide des deux.
-//
-//  On réintroduit donc 2 requêtes en parallèle par cycle pour retrouver
-//  cette vitesse, mais SANS revenir à l'ancien problème (pipeline continu
-//  sans pause → rate-limit périodique) :
-//   1. 2 requêtes identiques en parallèle (Promise.any) → la plus rapide
-//      des deux gagne, l'autre est annulée. Charge ×2 par cycle, mais
-//      UN SEUL cycle par seconde (pas de pipeline continu).
-//   2. Timeout généreux et fixe de 1200ms par requête.
-//   3. Si les 2 requêtes échouent, on retente le tout UNE fois avant
-//      d'afficher quoi que ce soit en rouge.
-//   4. Le cycle complet est suivi d'une pause qui complète jusqu'à
-//      1000ms, pour caler le rafraîchissement sur 1s pile.
-
-async function cotesLoop() {
-  const generation = ++_fetchGeneration;
-  _lastPartsHash = '';  // reset hash à chaque nouvelle course
-
-  // (timeout désormais adaptatif, voir currentCycleParams)
-
-  // ── Calcule le rythme du cycle selon la proximité du départ ──
-  // (voir CFG.cycleFarMs / cycleMidMs / cycleHotMs / cycleUltraMs)
-  function currentCycleParams() {
-    const race = S.programme[effectiveIdx()];
-    const secsLeft = race ? Math.round((race.depart - Date.now()) / 1000) : 9999;
-    if (secsLeft <= CFG.ultraThresholdSecs) {
-      return { ms: CFG.cycleUltraMs, n: CFG.raceParallelUltra, label: 'ULTRA', timeout: 600 };
-    }
-    if (secsLeft <= CFG.hotThresholdSecs) {
-      return { ms: CFG.cycleHotMs, n: CFG.raceParallelHot, label: 'HOT', timeout: 900 };
-    }
-    if (secsLeft <= CFG.farThresholdSecs) {
-      return { ms: CFG.cycleMidMs, n: CFG.raceParallelCold, label: 'MID', timeout: 1200 };
-    }
-    return { ms: CFG.cycleFarMs, n: CFG.raceParallelCold, label: 'FAR', timeout: 1200 };
-  }
-
-  // ── Lance N requêtes identiques en parallèle, garde la 1ère valide ──
-  async function raceRequests(url, timeoutMs, n) {
-    const controllers = Array.from({ length: n }, () => new AbortController());
-    const makeOne = (ctrl) => {
-      const id = setTimeout(() => ctrl.abort(), timeoutMs);
-      const headers = {};
-      if (_etags[url]) headers['If-None-Match'] = _etags[url];
-      return fetch(url, { cache: 'no-store', signal: ctrl.signal, headers })
-        .then(r => {
-          clearTimeout(id);
-          if (r.status === 304) return null;
-          if (!r.ok) {
-            const err = new Error(`HTTP ${r.status}`);
-            err.httpStatus = r.status;
-            throw err;
-          }
-          const etag = r.headers.get('ETag');
-          if (etag) _etags[url] = etag;
-          return r.json().then(d => d.participants || []);
-        })
-        .catch(e => {
-          clearTimeout(id);
-          if (e.name === 'AbortError') e.isTimeout = true;
-          throw e;
-        });
-    };
-    try {
-      const result = await Promise.any(controllers.map(c => makeOne(c)));
-      controllers.forEach(c => { try { c.abort(); } catch (_) {} });
-      return result;
-    } catch (e) {
-      controllers.forEach(c => { try { c.abort(); } catch (_) {} });
-      if (e instanceof AggregateError && e.errors && e.errors.length) {
-        const withStatus  = e.errors.find(x => x.httpStatus);
-        const withTimeout = e.errors.find(x => x.isTimeout);
-        throw (withStatus || withTimeout || e.errors[0]);
-      }
-      throw e;
-    }
-  }
-
-  while (true) {
-    if (_fetchGeneration !== generation) return;
-
-    if (S.programme.length === 0) {
-      await new Promise(r => setTimeout(r, 200));
-      continue;
-    }
-
-    const cycleStart = performance.now();
-    const race = S.programme[effectiveIdx()];
-    const url  = `${PMU_BASE_PARTS}/programme/${datePmu(S.today)}/R${race.reunion}/C${race.course}/participants?specialisation=OFFLINE`;
-    const { ms: CYCLE_MS, n: N_RACE, label: speedLabel, timeout: TIMEOUT_MS } = currentCycleParams();
-
-    let parts = null;
-    let lastErr = null;
-    let ms = 0;
-
-    // ── Essai 1 (2 requêtes en parallèle), puis 1 retry silencieux ──
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const t0 = performance.now();
-      try {
-        parts = await raceRequests(url, TIMEOUT_MS, N_RACE);
-        ms = Math.round(performance.now() - t0);
-        lastErr = null;
-        break;  // succès, on sort de la boucle de retry
-      } catch (e) {
-        ms = Math.round(performance.now() - t0);
-        lastErr = e;
-        // pas de pause entre essai 1 et essai 2 : on retente tout de suite
-      }
-    }
-
-    if (_fetchGeneration !== generation) return;
-
-    if (lastErr) {
-      // Les 2 essais ont échoué → on affiche enfin l'erreur
-      setStatus(false);
-      let label = 'ERR';
-      if (lastErr.httpStatus) label = `HTTP${lastErr.httpStatus}`;
-      else if (lastErr.isTimeout) label = 'TIMEOUT';
-      document.getElementById('ts').innerHTML =
-        `⚠ ${timeNow()} <span style="color:var(--red)">${ms}ms ${label}</span>`;
-    } else if (parts === null) {
-      // 304 Not Modified — données inchangées
-      document.getElementById('ts').innerHTML =
-        `= ${timeNow()} <span style="color:var(--text3);font-weight:600">${ms}ms 304</span>`;
-      // Détection du gel réel : pas de changement + heure prévue dépassée + stable depuis oddsStableMs
-      const now304 = Date.now();
-      if (S.oddsFrozenAt === null
-          && now304 >= race.depart
-          && (now304 - S.lastOddsChangeAt) >= CFG.oddsStableMs) {
-        S.oddsFrozenAt = now304;
-        addAlert('info', '🧊', `Cotes figées — bascule dans ${Math.round(CFG.switchAfterFreezeMs / 1000)}s`);
-      }
-    } else {
-      const newHash   = hashParts(parts);
-      const unchanged = (newHash === _lastPartsHash);
-      _lastPartsHash  = newHash;
-
-      // Détection du gel réel des cotes : on ne se fie plus à l'heure PRÉVUE
-      // (race.depart) seule, car une course retardée continue de voir ses
-      // cotes bouger après cette heure. On considère les cotes figées
-      // seulement quand elles n'ont PLUS changé depuis CFG.oddsStableMs ET
-      // que l'heure prévue est dépassée (sécurité : évite un faux gel détecté
-      // bien avant le départ sur une course avec peu de mises).
-      const nowFreeze = Date.now();
-      if (!unchanged) {
-        S.lastOddsChangeAt = nowFreeze; // les cotes ont vraiment bougé → pas (encore) figées
-      } else if (S.oddsFrozenAt === null
-                 && nowFreeze >= race.depart
-                 && (nowFreeze - S.lastOddsChangeAt) >= CFG.oddsStableMs) {
-        S.oddsFrozenAt = nowFreeze;
-        addAlert('info', '🧊', `Cotes figées — bascule dans ${Math.round(CFG.switchAfterFreezeMs / 1000)}s`);
-      }
-
-      addLatency(ms);
-      S.lastFetchMs = ms;
-      if (!unchanged) S.participants = parts;
-      setStatus(true);
-
-      const latColor = ms < 100 ? '#29c98a' : ms < 300 ? '#f5c842' : '#f0445a';
-      const speedColor = speedLabel === 'ULTRA' ? '#ff2d55' : speedLabel === 'HOT' ? '#f0445a' : speedLabel === 'MID' ? '#f5c842' : 'var(--text3)';
-      document.getElementById('ts').innerHTML =
-        `↻ ${timeNow()} <span style="color:${latColor};font-weight:600">${ms}ms</span> <span style="color:${speedColor};font-size:10px">${speedLabel}</span>`;
-
-      const secsLeft = Math.round((race.depart - Date.now()) / 1000);
-      if (secsLeft <= CFG.snapSecs && !S.snapDone) doSnapshot();
-
-      if (!unchanged) {
-        checkDrops();
-        renderTable();
-      }
-    }
-
-    // ── Cale le cycle sur 1 seconde ──────────────────
-    const elapsed = performance.now() - cycleStart;
-    const wait = Math.max(0, CYCLE_MS - elapsed);
-    await new Promise(r => setTimeout(r, wait));
-  }
+// ── BOUCLE PRINCIPALE (lecture seule, 1×/s) ─────────────
+async function tick() {
+  S.tick++;
+  await syncState();
 }
 
-// ── DÉMARRAGE ────────────────────────────────────────────
 async function boot() {
   document.getElementById('loading').style.display = 'flex';
-  S.today = dateStr(new Date());
-
-  let ok = await loadProg();
-
-  // Si pas de courses aujourd'hui, chercher les 7 prochains jours
-  if (!ok || S.programme.length === 0) {
-    const jours = ['dim', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam'];
-    setLoadSub('RECHERCHE DU PROCHAIN PROGRAMME...');
-
-    for (let offset = 1; offset <= 7; offset++) {
-      const d  = new Date();
-      d.setDate(d.getDate() + offset);
-      const ds = dateStr(d);
-      setLoadSub(`ESSAI ${ds.slice(6)}/${ds.slice(4, 6)}...`);
-      try {
-        const url  = `${PMU_BASE_PROG}/programme/${datePmu(ds)}?specialisation=OFFLINE`;
-        const r    = await fetchWithTimeout(url, { cache: 'no-store' });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const data = await r.json();
-        const races = [];
-        for (const ru of (data?.programme?.reunions || [])) {
-          if (isAnnulee(ru)) continue;
-          if (!isFrench(ru)) continue;
-          const hip = ru.hippodrome?.libelleCourt || ru.hippodrome?.libelleLong || `R${ru.numOfficiel}`;
-          for (const co of (ru.courses || [])) {
-            if (isAnnulee(co)) continue;
-            races.push({
-              reunion: ru.numOfficiel,
-              course:  co.numOrdre,
-              depart:  co.heureDepart,
-              libelle: co.libelle || co.libelleCourt || `Course ${co.numOrdre}`,
-              hip,
-              disc: co.discipline || co.specialite || '',
-            });
-          }
-        }
-        if (races.length) {
-          S.today     = ds;
-          S.programme = races.sort((a, b) => a.depart - b.depart);
-          S.lastProg  = Date.now();
-          setStatus(true);
-          addAlert('prog', '📅', `Pas de courses aujourd'hui — ${jours[d.getDay()]} ${ds.slice(6)}/${ds.slice(4, 6)} : ${races.length} courses`);
-          break;
-        }
-      } catch (_) {}
-    }
-
-    if (S.programme.length === 0) {
-      addAlert('prog', '⚠️', 'Aucun programme trouvé. Vérifiez la connexion.');
-      setStatus(false);
-    }
-  }
-
-  if (S.programme.length > 0) {
-    S.curRaceIdx       = findNext();
-    S.curIdx           = S.curRaceIdx;
-    S.lastOddsChangeAt = Date.now();
-    S.oddsFrozenAt     = null;
-    updateNav();
-  }
-
+  setLoadSub('CONNEXION AU SERVEUR...');
+  await syncState();
   document.getElementById('loading').style.display = 'none';
-  tick();
-  setInterval(tick, 1000);
-  cotesLoop();
+  setInterval(tick, POLL_MS);
 }
 
 const _bootWatchdog = setTimeout(function () {
   const sub = document.getElementById('load-sub');
-  if (sub && sub.textContent.indexOf('CHARGEMENT DU PROGRAMME') !== -1) {
+  if (sub && sub.textContent.indexOf('CONNEXION') !== -1) {
     sub.style.color = '#d93250';
-    sub.textContent = 'BLOQUÉ : boot() ne répond pas après 8s (voir Console)';
+    sub.textContent = 'BLOQUÉ : /api/state ne répond pas après 8s (le serveur Railway est-il bien démarré ?)';
   }
 }, 8000);
 
