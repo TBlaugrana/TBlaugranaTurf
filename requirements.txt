@@ -1,0 +1,1 @@
+# Aucune dépendance externe : server.py n'utilise que la bibliothèque standard Python.
