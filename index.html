@@ -59,24 +59,6 @@ html, body {
   text-transform: uppercase;
   color: var(--accent);
 }
-#btnFermer {
-  position: absolute;
-  top: 50%; right: 12px;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.45;
-  transition: opacity 0.15s;
-  line-height: 1;
-}
-#btnFermer:hover {
-  opacity: 1;
-}
 
 /* ── COUNTDOWN BANNER ───────────────────────────────── */
 #countdownBanner {
@@ -585,12 +567,6 @@ body:not(.race-started) .row-drop { visibility: hidden; }
 <!-- TITLE BANNER -->
 <div id="titleBanner">
   <h1>TBlaugrana BOT</h1>
-  <button id="btnFermer" onclick="fermerBot()" title="Arrêter le serveur">
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <line x1="3" y1="3" x2="15" y2="15" stroke="#d9163a" stroke-width="2.2" stroke-linecap="round"/>
-      <line x1="15" y1="3" x2="3" y2="15" stroke="#d9163a" stroke-width="2.2" stroke-linecap="round"/>
-    </svg>
-  </button>
 </div>
 
 <!-- COUNTDOWN BANNER -->
@@ -1294,13 +1270,6 @@ function post(path, body) {
 function showErr(msg) { const e=document.getElementById("errBox"); e.textContent=msg; e.classList.add("show"); }
 function hideErr()    { document.getElementById("errBox").classList.remove("show"); }
 
-async function fermerBot() {
-  if (!confirm("Arrêter le serveur TBlaugrana ?")) return;
-  try {
-    await post("/api/shutdown", {});
-  } catch(_) {}
-  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:monospace;color:#8892a4;font-size:14px;letter-spacing:2px;">SERVEUR ARRÊTÉ</div>';
-}
 </script>
 </body>
 </html>
