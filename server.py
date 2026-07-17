@@ -444,6 +444,8 @@ def _build_state_payload() -> dict:
         "seq"                 : STATE.get("seq", 0),
         "race_started"        : bool(race_started),
         "last_odds_change_ts" : STATE.get("last_odds_change_ts"),
+        "selected_reunion"    : STATE.get("selected_reunion"),
+        "selected_course"     : STATE.get("selected_course"),
     }
 
 # ── Boucle scraping async (toutes les 5 secondes) ─────────────────────────────
