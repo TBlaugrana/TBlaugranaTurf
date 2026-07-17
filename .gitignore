@@ -1,0 +1,4 @@
+tblbot.pid
+__pycache__/
+*.pyc
+.env
