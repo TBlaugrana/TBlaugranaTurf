@@ -1,0 +1,2 @@
+# Aucune dependance externe : server.py n'utilise que la bibliotheque standard Python.
+# Ce fichier sert uniquement a ce que Railway (Nixpacks) detecte automatiquement un projet Python.
