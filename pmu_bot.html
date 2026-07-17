@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>TBlaugrana Rang</title>
+<title>TBlaugrana Turf</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -295,7 +295,7 @@
 <body>
 <div class="page">
 
-  <div class="brand-title">🐎 TBlaugrana Rang 🐎</div>
+  <div class="brand-title">🐎 TBlaugrana Turf 🐎</div>
 
   <div class="card" id="selectionCard">
     <div class="field">
@@ -330,7 +330,7 @@ const SPEED_WINDOW_MS = 45000;             // fenêtre glissante utilisée pour 
 const SPEED_THRESHOLD_PTS_PER_MIN = 6;     // seuil (points de probabilité implicite / min) au-delà duquel on affiche le badge ⚡
 const REPROG_INTERVAL_MS = 45000;          // recharge le programme en tâche de fond toutes les 45s (detecte retards / courses terminées)
 const DEPART_CHANGE_THRESHOLD_S = 15;      // écart d'heure de départ (en secondes) à partir duquel on considère que la course a été retardée/avancée
-const RACE_STALE_MS = 20 * 60 * 1000;      // au-delà de 20 min après le départ prévu sans nouvelle info, on considère la course terminée
+const SWITCH_BEFORE_NEXT_MS = 5 * 60 * 1000; // bascule vers la course suivante quand celle-ci est à 5 min (ou moins) de son propre départ
 
 const today = new Date();
 
@@ -442,6 +442,28 @@ async function refreshProgrammeBackground(){
   }
 }
 
+// Trouve la prochaine course au programme, chronologiquement après celle actuellement suivie.
+function findNextCourse(){
+  if(selectedReunion === null || selectedCourse === null) return null;
+  const currentDepartMs = departTs !== null ? departTs * 1000 : 0;
+  const after = allCourses
+    .filter(c => (c.numReunion !== selectedReunion || c.course !== selectedCourse) && c.depart && c.depart > currentDepartMs)
+    .sort((a,b)=> a.depart - b.depart);
+  return after.length ? after[0] : null;
+}
+
+function switchToCourse(c, msg){
+  selectedReunion = c.numReunion;
+  selectedCourse = c.course;
+  departTs = c.depart / 1000.0;
+  selectedDiscipline = c.discipline;
+  selectedNbPartants = c.nbPartants;
+  courseInfoEl.textContent = formatCourseLabel(c);
+  updateToteLabel();
+  if(msg) snapLineEl.textContent = msg;
+  startTracking();
+}
+
 function handleProgrammeRefresh(){
   const now = Date.now();
 
@@ -472,14 +494,17 @@ function handleProgrammeRefresh(){
       courseInfoEl.textContent = formatCourseLabel(current);
       updateToteLabel();
     }
-    return; // la course suivie existe toujours au programme
   }
+  // Remarque : on ne bascule plus simplement parce que la course actuelle a disparu du
+  // programme ou que son départ est passé depuis longtemps. On reste dessus tant que la
+  // course suivante n'est pas imminente (voir plus bas) — la course suivie peut donc rester
+  // affichée bien après son propre départ.
 
-  // La course suivie n'apparaît plus dans le programme (terminée / retirée) : on avance vers
-  // la suivante, mais seulement si son départ prévu est déjà bien dans le passé (évite de
-  // sauter une course à cause d'une simple absence temporaire de données côté API).
-  if(departTs !== null && (now - departTs * 1000) > RACE_STALE_MS){
-    selectNextCourse();
+  // Bascule vers la course suivante uniquement quand celle-ci est à 5 min (ou moins) de son
+  // propre départ — que la course actuelle soit terminée, en cours, ou toujours au programme.
+  const next = findNextCourse();
+  if(next && (next.depart - now) <= SWITCH_BEFORE_NEXT_MS){
+    switchToCourse(next, "➡️ Bascule automatique vers la course suivante…");
   }
 }
 
