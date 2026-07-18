@@ -27,6 +27,12 @@ import os
 import threading
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# Fuseau horaire de reference pour tout affichage/calcul d'heure. Le serveur
+# (Railway) tourne en UTC ; sans ca, les heures affichees avaient 2h de moins
+# que l'heure reelle en France (heure d'ete, UTC+2).
+PARIS_TZ = ZoneInfo("Europe/Paris")
 
 PORT = int(os.environ.get("PORT", 8000))
 
@@ -42,7 +48,7 @@ SPEED_THRESHOLD_PTS_PER_MIN = 6 # seuil au-dela duquel le badge eclair est affic
 REPROG_INTERVAL_S = 45          # recharge le programme en tache de fond toutes les 45s
 DEPART_CHANGE_THRESHOLD_S = 15  # ecart d'heure de depart a partir duquel on considere un retard/avance
 RACE_STALE_S = 5 * 60           # bascule vers la course suivante 5 min apres son depart
-TOP_N = 5                       # nombre de chevaux affiches (classement par ecart)
+FAVORI_MAX_PCT = 35.0           # chevaux masques au-dela de ce % au Gagnant
 
 # ---------------------------------------------------------------------------
 # Etat partage, lu par les threads HTTP (GET /api/state) et ecrit uniquement
@@ -147,11 +153,11 @@ class Tracker:
     def format_course_label(self, c):
         hhmm = ""
         if c["depart"]:
-            hhmm = datetime.fromtimestamp(c["depart"] / 1000).strftime("%H:%M")
+            hhmm = datetime.fromtimestamp(c["depart"] / 1000, tz=PARIS_TZ).strftime("%H:%M")
         return f"{hhmm} — R{c['numReunion']}C{c['course']} — {c['hip']} — {c['libelle']}"
 
     def load_programme(self):
-        today = datetime.now()
+        today = datetime.now(PARIS_TZ)
         path = f"{PMU_PROG_PREFIX}programme/{date_pmu(today)}?specialisation=OFFLINE"
         try:
             data = http_get_json(PMU_PROG_HOST, path)
@@ -183,7 +189,7 @@ class Tracker:
         set_state(rows=[], snapLine="📸 Rapports probables : en attente")
 
     def refresh_programme_background(self):
-        today = datetime.now()
+        today = datetime.now(PARIS_TZ)
         path = f"{PMU_PROG_PREFIX}programme/{date_pmu(today)}?specialisation=OFFLINE"
         try:
             data = http_get_json(PMU_PROG_HOST, path)
@@ -300,6 +306,16 @@ class Tracker:
             ecart = self.compute_ecart(cote_g, cote_p)
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN
+            # Regles d'affichage :
+            #  - masque des que la cote Gagnant depasse FAVORI_MAX_PCT (35%)
+            #  - sinon, ne reste visible que si l'ecart (Gagnant - Place) est positif
+            # (au lieu d'un top 5 fixe) — un cheval qui repasse hors criteres est
+            # masque, pas supprime, donc il reapparait instantanement des qu'il
+            # redevient eligible.
+            is_too_favori = cote_g is not None and cote_g > FAVORI_MAX_PCT
+            has_positive_ecart = ecart is not None and ecart > 0
+            hidden = is_too_favori or not has_positive_ecart
+
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
@@ -309,12 +325,10 @@ class Tracker:
                 "isFavori": bool(g and g.get("favoris")),
                 "isFast": is_fast,
                 "speed": spd,
-                # ne montre que le top 5 : un cheval qui redescend est masque, pas supprime,
-                # donc il reapparait instantanement s'il revient dans les 5 premiers
-                "hidden": idx >= TOP_N,
+                "hidden": hidden,
             })
 
-        now_str = datetime.now().strftime("%H:%M:%S")
+        now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
         set_state(
             rows=rows,
             snapLine=f"📡 Rapports probables mis a jour — {now_str}",
@@ -326,7 +340,7 @@ class Tracker:
     def poll_once(self):
         if self.selected_reunion is None or self.selected_course is None:
             return
-        today = datetime.now()
+        today = datetime.now(PARIS_TZ)
         path = (f"{PMU_CIT_PREFIX}programme/{date_pmu(today)}/R{self.selected_reunion}/C{self.selected_course}"
                 f"/citations?paris=SIMPLE_GAGNANT&specialisation=OFFLINE&groupe=true")
         try:
