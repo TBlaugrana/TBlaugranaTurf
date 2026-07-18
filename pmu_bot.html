@@ -260,6 +260,10 @@
   .late-badge{ flex:none; font-size:12px; margin-left:2px; }
   .speed-badge{ flex:none; font-size:13px; margin-left:2px; }
   .speed-badge.speed-up{ filter: drop-shadow(0 0 0 var(--success)); }
+  .bigmove-badge{ flex:none; font-size:13px; margin-left:2px; }
+  .row.row-bigmove{ border-width:2px; }
+  .row.row-bigmove.bigmove-up{ border-color:var(--success); }
+  .row.row-bigmove.bigmove-down{ border-color:var(--danger); }
   .row-late{ border-style:dashed; }
   .cote{
     font-family:'JetBrains Mono',monospace;
@@ -380,7 +384,7 @@ function buildRow(num){
   row.className = 'row';
   row.dataset.num = num;
   row.innerHTML = `
-    <div class="horse"><span class="num-badge"></span><span class="horse-name"></span><span class="speed-badge" style="display:none;"></span></div>
+    <div class="horse"><span class="num-badge"></span><span class="horse-name"></span><span class="bigmove-badge" style="display:none;"></span><span class="speed-badge" style="display:none;"></span></div>
     <div class="cote"></div>
     <div class="cote-prev"></div>
     <div class="var flat">—</div>
@@ -469,6 +473,23 @@ function renderTable(rows){
         speedEl.title = `Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} pts de probabilité/min (Gagnant)`;
       }
     }
+
+    // Badge "gros écart" : cheval dont la probabilité Gagnant a bougé d'au
+    // moins 2 points sur les 2 dernières minutes (mouvement de fond, à
+    // distinguer du Δ15s qui ne capte que les à-coups très récents).
+    const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
+    const isBigMove = !!r.isBigMove;
+    const bigmoveEl = row.querySelector('.bigmove-badge');
+    if(bigmoveEl){
+      bigmoveEl.style.display = isBigMove ? 'inline' : 'none';
+      if(isBigMove && delta120 !== undefined){
+        bigmoveEl.textContent = delta120 > 0 ? '🔺' : '🔻';
+        bigmoveEl.title = `Écart ≥ 2% sur les 2 dernières minutes : ${delta120 >= 0 ? '+' : ''}${delta120.toFixed(2)}% (Gagnant)`;
+      }
+    }
+    row.classList.toggle('row-bigmove', isBigMove);
+    row.classList.toggle('bigmove-up', isBigMove && delta120 !== undefined && delta120 > 0);
+    row.classList.toggle('bigmove-down', isBigMove && delta120 !== undefined && delta120 < 0);
 
     // ne montre que les GAINERS_TOP_N chevaux (6) avec la plus forte progression
     // de part de marché (Gagnant) sur les 15 dernières secondes ; un cheval qui
