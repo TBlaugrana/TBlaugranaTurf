@@ -51,6 +51,23 @@ RACE_STALE_S = 5 * 60           # bascule vers la course suivante 5 min apres so
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
+BIGMOVE_WINDOW_S = 120           # fenetre de comparaison pour le badge "gros ecart" : cote actuelle vs il y a 2 min
+BIGMOVE_THRESHOLD_PTS = 2.0      # ecart (en points de %) a partir duquel le badge "gros ecart" s'affiche
+
+# on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
+# (sinon un point vieux de 2 min serait deja purge par la fenetre de 45s de la vitesse)
+HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S, BIGMOVE_WINDOW_S)
+
+# ---------------------------------------------------------------------------
+# Persistance sur disque : permet de retrouver l'etat (course suivie,
+# historique des cotes...) si le process redemarre (crash, redeploiement,
+# mise en veille du service...). Sans ca, un simple redemarrage faisait
+# repartir tout le suivi de zero (cotes a 0 / "Chargement..." le temps de
+# reaccumuler de l'historique).
+# ---------------------------------------------------------------------------
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_state.json")
+SAVE_INTERVAL_S = 5              # ecrit l'etat sur disque au plus toutes les 5s
+
 # ---------------------------------------------------------------------------
 # Etat partage, lu par les threads HTTP (GET /api/state) et ecrit uniquement
 # par le thread de suivi (tracker_loop). Protege par un verrou.
@@ -126,6 +143,63 @@ class Tracker:
         self.horse_names = {}
         self.odds_history = {}    # num -> [(t, prob), ...]
         self.last_reprog = 0.0
+        self.last_save = 0.0
+
+    # -- persistance sur disque ------------------------------------------
+    def save_snapshot(self):
+        """Ecrit l'etat de suivi courant sur disque (ecriture atomique via
+        fichier temporaire + renommage, pour ne jamais laisser un fichier
+        a moitie ecrit si le process est tue pendant l'ecriture)."""
+        try:
+            snapshot = {
+                "selected_reunion": self.selected_reunion,
+                "selected_course": self.selected_course,
+                "depart_ts": self.depart_ts,
+                "selected_discipline": self.selected_discipline,
+                "selected_nb_partants": self.selected_nb_partants,
+                "favoris_order": self.favoris_order,
+                "horse_names": self.horse_names,
+                "odds_history": self.odds_history,
+                "saved_at": time.time(),
+            }
+            tmp_path = STATE_FILE + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f)
+            os.replace(tmp_path, STATE_FILE)
+        except Exception as e:
+            print(f"[TRACKER] echec sauvegarde etat : {e}")
+
+    def maybe_save_snapshot(self, force=False):
+        now = time.time()
+        if force or (now - self.last_save >= SAVE_INTERVAL_S):
+            self.save_snapshot()
+            self.last_save = now
+
+    def load_snapshot(self):
+        """Tente de restaurer l'etat sauvegarde au demarrage. Renvoie True si
+        une course encore pertinente (pas trop ancienne) a ete restauree."""
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                snap = json.load(f)
+        except Exception:
+            return False
+
+        depart_ts = snap.get("depart_ts")
+        if depart_ts is None:
+            return False
+        # on ignore un etat sauvegarde trop vieux (course deja bien terminee)
+        if time.time() - depart_ts > RACE_STALE_S:
+            return False
+
+        self.selected_reunion = snap.get("selected_reunion")
+        self.selected_course = snap.get("selected_course")
+        self.depart_ts = depart_ts
+        self.selected_discipline = snap.get("selected_discipline") or ''
+        self.selected_nb_partants = snap.get("selected_nb_partants")
+        self.favoris_order = snap.get("favoris_order") or []
+        self.horse_names = snap.get("horse_names") or {}
+        self.odds_history = snap.get("odds_history") or {}
+        return self.selected_reunion is not None and self.selected_course is not None
 
     # -- programme -----------------------------------------------------
     def parse_programme(self, data):
@@ -157,14 +231,20 @@ class Tracker:
             hhmm = datetime.fromtimestamp(c["depart"] / 1000, tz=PARIS_TZ).strftime("%H:%M")
         return f"{hhmm} — R{c['numReunion']}C{c['course']} — {c['hip']} — {c['libelle']}"
 
-    def load_programme(self):
+    def load_programme(self, reset_selection=True):
         today = datetime.now(PARIS_TZ)
         path = f"{PMU_PROG_PREFIX}programme/{date_pmu(today)}?specialisation=OFFLINE"
         try:
             data = http_get_json(PMU_PROG_HOST, path)
             self.all_courses = self.parse_programme(data)
             set_state(statusLine=f"Programme charge ({len(self.all_courses)} courses)")
-            self.select_next_course()
+            if reset_selection:
+                self.select_next_course()
+            else:
+                # une selection restauree depuis le disque est deja en place :
+                # on se contente de rafraichir son libelle/heure si elle existe
+                # toujours dans le programme du jour (sans effacer l'historique)
+                self.handle_programme_refresh()
         except Exception as e:
             set_state(statusLine=f"Erreur programme : {e}")
 
@@ -182,6 +262,7 @@ class Tracker:
         self.selected_nb_partants = chosen["nbPartants"]
         set_state(courseInfo=self.format_course_label(chosen), departTs=self.depart_ts)
         self.start_tracking()
+        self.maybe_save_snapshot(force=True)
 
     def start_tracking(self):
         self.favoris_order = []
@@ -271,7 +352,7 @@ class Tracker:
             prob = cote  # "ratio" est deja le % Gagnant affiche, pas une cote a inverser
             hist = self.odds_history.setdefault(num, [])
             hist.append((now, prob))
-            while len(hist) > 1 and now - hist[0][0] > SPEED_WINDOW_S:
+            while len(hist) > 1 and now - hist[0][0] > HISTORY_RETENTION_S:
                 hist.pop(0)
             if len(hist) >= 2:
                 first_t, first_p = hist[0]
@@ -305,13 +386,17 @@ class Tracker:
 
         # Pour chaque cheval connu : cote Gagnant actuelle, cote Gagnant il y a
         # ~15s, et la variation entre les deux (part de marche gagnee/perdue).
+        # On calcule aussi l'ecart sur les 2 dernieres minutes (delta120), utilise
+        # pour marquer les chevaux avec un mouvement de fond significatif (>=2%).
         deltas = {}
         for num in self.favoris_order:
             g = gagnant_map.get(num)
             cote_g = g["ratio"] if g else None
             cote_g15 = self.get_value_at(num, now - DELTA_WINDOW_S) if cote_g is not None else None
             delta15 = (cote_g - cote_g15) if (cote_g is not None and cote_g15 is not None) else None
-            deltas[num] = (cote_g, cote_g15, delta15)
+            cote_g120 = self.get_value_at(num, now - BIGMOVE_WINDOW_S) if cote_g is not None else None
+            delta120 = (cote_g - cote_g120) if (cote_g is not None and cote_g120 is not None) else None
+            deltas[num] = (cote_g, cote_g15, delta15, delta120)
 
         def sort_key(n):
             d = deltas[n][2]
@@ -326,17 +411,20 @@ class Tracker:
         rows = []
         for idx, num in enumerate(display_order):
             g = gagnant_map.get(num)
-            cote_g, cote_g15, delta15 = deltas[num]
+            cote_g, cote_g15, delta15, delta120 = deltas[num]
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN
+            is_bigmove = delta120 is not None and abs(delta120) >= BIGMOVE_THRESHOLD_PTS
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
                 "coteG": cote_g,
                 "coteG15": cote_g15,
                 "delta15": delta15,
+                "delta120": delta120,
                 "isFavori": bool(g and g.get("favoris")),
                 "isFast": is_fast,
+                "isBigMove": is_bigmove,
                 "speed": spd,
                 "hidden": idx >= GAINERS_TOP_N,
             })
@@ -349,6 +437,7 @@ class Tracker:
             statusLine="",
             updatedAt=time.time(),
         )
+        self.maybe_save_snapshot()
 
     def poll_once(self):
         if self.selected_reunion is None or self.selected_course is None:
@@ -364,7 +453,17 @@ class Tracker:
 
     # -- boucle principale -------------------------------------------------
     def run_forever(self):
-        self.load_programme()
+        restored = self.load_snapshot()
+        if restored:
+            set_state(
+                statusLine="Etat precedent restaure, reprise du suivi…",
+                snapLine="🔁 Historique restaure apres redemarrage",
+                departTs=self.depart_ts,
+            )
+            print(f"[TRACKER] etat restaure depuis {STATE_FILE} "
+                  f"(R{self.selected_reunion}C{self.selected_course}, "
+                  f"{len(self.favoris_order)} chevaux en historique)")
+        self.load_programme(reset_selection=not restored)
         self.last_reprog = time.time()
         while True:
             loop_start = time.time()
