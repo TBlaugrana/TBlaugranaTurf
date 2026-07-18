@@ -260,10 +260,20 @@
   .late-badge{ flex:none; font-size:12px; margin-left:2px; }
   .speed-badge{ flex:none; font-size:13px; margin-left:2px; }
   .speed-badge.speed-up{ filter: drop-shadow(0 0 0 var(--success)); }
-  .bigmove-badge{ flex:none; font-size:13px; margin-left:2px; }
   .row.row-bigmove{ border-width:2px; }
   .row.row-bigmove.bigmove-up{ border-color:var(--success); }
   .row.row-bigmove.bigmove-down{ border-color:var(--danger); }
+  .num-wrap{ position:relative; flex:none; }
+  .bigmove-star{
+    position:absolute;
+    top:-3px; right:-4px;
+    font-size:10px;
+    line-height:1;
+    color:var(--text-dim);
+    text-shadow:0 0 0 var(--surface), 0 0 2px var(--surface), 0 0 2px var(--surface);
+  }
+  .row.bigmove-up .bigmove-star{ color:var(--success); }
+  .row.bigmove-down .bigmove-star{ color:var(--danger); }
   .row-late{ border-style:dashed; }
   .cote{
     font-family:'JetBrains Mono',monospace;
@@ -384,7 +394,7 @@ function buildRow(num){
   row.className = 'row';
   row.dataset.num = num;
   row.innerHTML = `
-    <div class="horse"><span class="num-badge"></span><span class="horse-name"></span><span class="bigmove-badge" style="display:none;"></span><span class="speed-badge" style="display:none;"></span></div>
+    <div class="horse"><span class="num-wrap"><span class="num-badge"></span><span class="bigmove-star" style="display:none;">★</span></span><span class="horse-name"></span><span class="speed-badge" style="display:none;"></span></div>
     <div class="cote"></div>
     <div class="cote-prev"></div>
     <div class="var flat">—</div>
@@ -475,17 +485,17 @@ function renderTable(rows){
     }
 
     // Badge "gros écart" : cheval dont la colonne "Ecart" (variation sur les
-    // 15 dernières secondes) a atteint ±2% à un moment de la course. Le
-    // marquage est DÉFINITIF (calculé côté serveur) : une fois franchi, le
-    // badge reste affiché pour toute la course, même si l'écart instantané
-    // redescend ensuite.
+    // 15 dernières secondes) a atteint ±2% à un moment de la course (dans la
+    // fenêtre active). Le marquage est DÉFINITIF (calculé côté serveur) : une
+    // fois franchi, l'étoile reste affichée pour toute la course. Placée en
+    // petit dans le coin du rond numéroté (pas à côté du nom) pour ne pas
+    // grignoter la place déjà limitée du nom du cheval sur mobile.
     const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
     const isBigMove = !!r.isBigMove;
-    const bigmoveEl = row.querySelector('.bigmove-badge');
+    const bigmoveEl = row.querySelector('.bigmove-star');
     if(bigmoveEl){
       bigmoveEl.style.display = isBigMove ? 'inline' : 'none';
       if(isBigMove && delta120 !== undefined){
-        bigmoveEl.textContent = delta120 > 0 ? '🔺' : '🔻';
         bigmoveEl.title = `Ecart ${delta120 >= 0 ? '+' : ''}${delta120.toFixed(2)}% atteint (Gagnant) — marqué pour toute la course`;
       }
     }
