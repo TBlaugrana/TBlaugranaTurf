@@ -288,18 +288,9 @@
   .fav-badge{ flex:none; font-size:12px; margin-left:2px; color:var(--accent-2); }
   .billet-badge{
     flex:none;
-    font-family:'JetBrains Mono',monospace;
-    font-size:10px;
-    font-weight:700;
-    letter-spacing:.03em;
-    text-transform:uppercase;
-    color:var(--success);
-    background:var(--success-bg);
-    border:1px solid var(--success);
-    border-radius:5px;
-    padding:2px 5px;
+    font-size:14px;
     margin-left:2px;
-    white-space:nowrap;
+    line-height:1;
   }
   .var{
     font-family:'JetBrains Mono',monospace;
@@ -457,14 +448,14 @@ function renderTable(rows){
       if(existing) existing.remove();
     }
 
-    // Badge "Billet" : affiché dès que l'écart (Gagnant - Placé) dépasse 3%
+    // Badge flamme : affiché dès que l'écart (Gagnant - Placé) dépasse 3%
     const showBillet = ecart !== undefined && ecart > 3;
     let billetBadge = row.querySelector('.billet-badge');
     if(showBillet && !billetBadge){
       billetBadge = document.createElement('span');
       billetBadge.className = 'billet-badge';
-      billetBadge.title = 'Écart supérieur à 3% — billet potentiel';
-      billetBadge.textContent = '🎫 Billet';
+      billetBadge.title = 'Écart supérieur à 3%';
+      billetBadge.textContent = '🔥';
       row.querySelector('.horse').appendChild(billetBadge);
     } else if(!showBillet && billetBadge){
       billetBadge.remove();
