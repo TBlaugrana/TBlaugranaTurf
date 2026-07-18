@@ -51,12 +51,14 @@ RACE_STALE_S = 5 * 60           # bascule vers la course suivante 5 min apres so
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
-BIGMOVE_WINDOW_S = 120           # fenetre de comparaison pour le badge "gros ecart" : cote actuelle vs il y a 2 min
 BIGMOVE_THRESHOLD_PTS = 2.0      # ecart (en points de %) a partir duquel le badge "gros ecart" s'affiche
+                                  # comparaison : cote actuelle vs plus bas/plus haut jamais observe pour ce
+                                  # cheval depuis le debut du suivi (pas une fenetre de temps fixe -- ca capte
+                                  # aussi bien un a-coup brutal qu'une derive lente et continue sur plusieurs
+                                  # minutes, qu'une fenetre de 2 min a duree fixe pourrait manquer)
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
-# (sinon un point vieux de 2 min serait deja purge par la fenetre de 45s de la vitesse)
-HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S, BIGMOVE_WINDOW_S)
+HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
 
 # ---------------------------------------------------------------------------
 # Persistance sur disque : permet de retrouver l'etat (course suivie,
@@ -390,17 +392,13 @@ class Tracker:
 
         # Pour chaque cheval connu : cote Gagnant actuelle, cote Gagnant il y a
         # ~15s, et la variation entre les deux (part de marche gagnee/perdue).
-        # On calcule aussi l'ecart sur les 2 dernieres minutes (delta120), utilise
-        # pour marquer les chevaux avec un mouvement de fond significatif (>=2%).
         deltas = {}
         for num in self.favoris_order:
             g = gagnant_map.get(num)
             cote_g = g["ratio"] if g else None
             cote_g15 = self.get_value_at(num, now - DELTA_WINDOW_S) if cote_g is not None else None
             delta15 = (cote_g - cote_g15) if (cote_g is not None and cote_g15 is not None) else None
-            cote_g120 = self.get_value_at(num, now - BIGMOVE_WINDOW_S) if cote_g is not None else None
-            delta120 = (cote_g - cote_g120) if (cote_g is not None and cote_g120 is not None) else None
-            deltas[num] = (cote_g, cote_g15, delta15, delta120)
+            deltas[num] = (cote_g, cote_g15, delta15)
 
         def sort_key(n):
             d = deltas[n][2]
@@ -415,18 +413,19 @@ class Tracker:
         rows = []
         for idx, num in enumerate(display_order):
             g = gagnant_map.get(num)
-            cote_g, cote_g15, delta15, delta120 = deltas[num]
+            cote_g, cote_g15, delta15 = deltas[num]
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN
 
-            # Marquage DEFINITIF : une fois que l'ecart sur 2 min atteint le seuil,
-            # le cheval reste marque pour le reste de la course, meme si l'ecart
-            # instantane redescend ensuite (fenetre glissante qui "oublie" le pic).
-            # On garde le plus grand ecart observe, pour l'affichage.
-            if delta120 is not None and abs(delta120) >= BIGMOVE_THRESHOLD_PTS:
+            # Marquage DEFINITIF : des que la colonne "Ecart" (delta15, la
+            # variation sur les 15 dernieres secondes) atteint +/-2%, le cheval
+            # reste marque pour le reste de la course. Sans ca, la ligne peut
+            # redescendre dans le classement / sortir du tableau au cycle
+            # suivant et le signal passe inaperçu.
+            if delta15 is not None and abs(delta15) >= BIGMOVE_THRESHOLD_PTS:
                 prev = self.bigmove_seen.get(num)
-                if prev is None or abs(delta120) > abs(prev["delta"]):
-                    self.bigmove_seen[num] = {"delta": delta120, "at": now}
+                if prev is None or abs(delta15) > abs(prev["delta"]):
+                    self.bigmove_seen[num] = {"delta": delta15, "at": now}
             bigmove = self.bigmove_seen.get(num)
             is_bigmove = bigmove is not None
 
@@ -436,7 +435,7 @@ class Tracker:
                 "coteG": cote_g,
                 "coteG15": cote_g15,
                 "delta15": delta15,
-                "delta120": bigmove["delta"] if bigmove else delta120,
+                "delta120": bigmove["delta"] if bigmove else None,
                 "isFavori": bool(g and g.get("favoris")),
                 "isFast": is_fast,
                 "isBigMove": is_bigmove,
