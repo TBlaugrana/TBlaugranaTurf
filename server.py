@@ -142,6 +142,7 @@ class Tracker:
         self.favoris_order = []   # ordre de suivi des chevaux (num en string)
         self.horse_names = {}
         self.odds_history = {}    # num -> [(t, prob), ...]
+        self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil 2% franchi (marquage definitif)
         self.last_reprog = 0.0
         self.last_save = 0.0
 
@@ -160,6 +161,7 @@ class Tracker:
                 "favoris_order": self.favoris_order,
                 "horse_names": self.horse_names,
                 "odds_history": self.odds_history,
+                "bigmove_seen": self.bigmove_seen,
                 "saved_at": time.time(),
             }
             tmp_path = STATE_FILE + ".tmp"
@@ -199,6 +201,7 @@ class Tracker:
         self.favoris_order = snap.get("favoris_order") or []
         self.horse_names = snap.get("horse_names") or {}
         self.odds_history = snap.get("odds_history") or {}
+        self.bigmove_seen = snap.get("bigmove_seen") or {}
         return self.selected_reunion is not None and self.selected_course is not None
 
     # -- programme -----------------------------------------------------
@@ -268,6 +271,7 @@ class Tracker:
         self.favoris_order = []
         self.horse_names = {}
         self.odds_history = {}
+        self.bigmove_seen = {}
         set_state(rows=[], snapLine="📸 Rapports probables : en attente")
 
     def refresh_programme_background(self):
@@ -414,19 +418,32 @@ class Tracker:
             cote_g, cote_g15, delta15, delta120 = deltas[num]
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN
-            is_bigmove = delta120 is not None and abs(delta120) >= BIGMOVE_THRESHOLD_PTS
+
+            # Marquage DEFINITIF : une fois que l'ecart sur 2 min atteint le seuil,
+            # le cheval reste marque pour le reste de la course, meme si l'ecart
+            # instantane redescend ensuite (fenetre glissante qui "oublie" le pic).
+            # On garde le plus grand ecart observe, pour l'affichage.
+            if delta120 is not None and abs(delta120) >= BIGMOVE_THRESHOLD_PTS:
+                prev = self.bigmove_seen.get(num)
+                if prev is None or abs(delta120) > abs(prev["delta"]):
+                    self.bigmove_seen[num] = {"delta": delta120, "at": now}
+            bigmove = self.bigmove_seen.get(num)
+            is_bigmove = bigmove is not None
+
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
                 "coteG": cote_g,
                 "coteG15": cote_g15,
                 "delta15": delta15,
-                "delta120": delta120,
+                "delta120": bigmove["delta"] if bigmove else delta120,
                 "isFavori": bool(g and g.get("favoris")),
                 "isFast": is_fast,
                 "isBigMove": is_bigmove,
                 "speed": spd,
-                "hidden": idx >= GAINERS_TOP_N,
+                # un cheval marque definitivement reste toujours visible, meme
+                # s'il n'est plus dans le top des plus fortes progressions sur 15s
+                "hidden": (idx >= GAINERS_TOP_N) and not is_bigmove,
             })
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
