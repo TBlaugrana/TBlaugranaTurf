@@ -269,7 +269,7 @@
     text-align:center;
     color:var(--text);
   }
-  .cote-place{
+  .cote-prev{
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
     font-size:16px;
@@ -277,21 +277,7 @@
     text-align:center;
     color:var(--text-dim);
   }
-  .cote-ecart{
-    font-family:'JetBrains Mono',monospace;
-    font-variant-numeric:tabular-nums;
-    font-size:18px;
-    font-weight:700;
-    text-align:center;
-    color:var(--accent-2);
-  }
   .fav-badge{ flex:none; font-size:12px; margin-left:2px; color:var(--accent-2); }
-  .billet-badge{
-    flex:none;
-    font-size:14px;
-    margin-left:2px;
-    line-height:1;
-  }
   .var{
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
@@ -336,7 +322,7 @@
 
   <div class="table-wrap">
     <div class="table-head">
-      <span>Cheval</span><span>Gagnant</span><span>Placé</span><span>Écart</span>
+      <span>Cheval</span><span>Gagnant</span><span>Il y a 15s</span><span>Δ 15s</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
   </div>
@@ -364,7 +350,6 @@ const rowsEl = document.getElementById('rows');
 
 let rowEls = {};        // num -> élément DOM de la ligne (réutilisé d'un cycle à l'autre)
 let lastGagnant = {};   // num -> dernière cote Gagnant affichée (pour détecter les variations et flasher)
-let lastPlace = {};     // num -> dernière cote Placé affichée
 let departTs = null;
 let pollTimer = null;
 
@@ -397,8 +382,8 @@ function buildRow(num){
   row.innerHTML = `
     <div class="horse"><span class="num-badge"></span><span class="horse-name"></span><span class="speed-badge" style="display:none;"></span></div>
     <div class="cote"></div>
-    <div class="cote-place"></div>
-    <div class="cote-ecart"></div>
+    <div class="cote-prev"></div>
+    <div class="var flat">—</div>
   `;
   row.querySelector('.num-badge').textContent = num;
   return row;
@@ -421,12 +406,12 @@ function renderTable(rows){
     const num = r.num;
     const nom = r.nom || `#${num}`;
     const coteG = (r.coteG === null || r.coteG === undefined) ? undefined : r.coteG;
-    const coteP = (r.coteP === null || r.coteP === undefined) ? undefined : r.coteP;
-    const ecart = (r.ecart === null || r.ecart === undefined) ? undefined : r.ecart;
+    const coteG15 = (r.coteG15 === null || r.coteG15 === undefined) ? undefined : r.coteG15;
+    const delta15 = (r.delta15 === null || r.delta15 === undefined) ? undefined : r.delta15;
 
     const coteGStr = coteG !== undefined ? `${coteG.toFixed(2)}%` : "—";
-    const cotePStr = coteP !== undefined ? `${coteP.toFixed(2)}%` : "—";
-    const ecartStr = ecart !== undefined ? `${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)}%` : "—";
+    const coteG15Str = coteG15 !== undefined ? `${coteG15.toFixed(2)}%` : "—";
+    const delta15Str = delta15 !== undefined ? `${delta15 >= 0 ? '+' : ''}${delta15.toFixed(2)}%` : "—";
 
     let row = rowEls[num];
     if(!row){
@@ -448,19 +433,6 @@ function renderTable(rows){
       if(existing) existing.remove();
     }
 
-    // Badge flamme : affiché dès que l'écart (Gagnant - Placé) dépasse 3%
-    const showBillet = ecart !== undefined && ecart > 3;
-    let billetBadge = row.querySelector('.billet-badge');
-    if(showBillet && !billetBadge){
-      billetBadge = document.createElement('span');
-      billetBadge.className = 'billet-badge';
-      billetBadge.title = 'Écart supérieur à 3%';
-      billetBadge.textContent = '🔥';
-      row.querySelector('.horse').appendChild(billetBadge);
-    } else if(!showBillet && billetBadge){
-      billetBadge.remove();
-    }
-
     const coteEl = row.querySelector('.cote');
     if(coteEl.textContent !== coteGStr){
       coteEl.textContent = coteGStr;
@@ -475,12 +447,16 @@ function renderTable(rows){
     }
     if(coteG !== undefined) lastGagnant[num] = coteG;
 
-    const cotePEl = row.querySelector('.cote-place');
-    if(cotePEl.textContent !== cotePStr) cotePEl.textContent = cotePStr;
-    if(coteP !== undefined) lastPlace[num] = coteP;
+    const cotePrevEl = row.querySelector('.cote-prev');
+    if(cotePrevEl.textContent !== coteG15Str) cotePrevEl.textContent = coteG15Str;
 
-    const ecartEl = row.querySelector('.cote-ecart');
-    if(ecartEl.textContent !== ecartStr) ecartEl.textContent = ecartStr;
+    const deltaEl = row.querySelector('.var');
+    if(deltaEl.textContent !== delta15Str) deltaEl.textContent = delta15Str;
+    deltaEl.classList.remove('up','down','flat');
+    if(delta15 === undefined) deltaEl.classList.add('flat');
+    else if(delta15 > 0) deltaEl.classList.add('up');
+    else if(delta15 < 0) deltaEl.classList.add('down');
+    else deltaEl.classList.add('flat');
 
     const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
     const isFast = !!r.isFast;
@@ -494,10 +470,10 @@ function renderTable(rows){
       }
     }
 
-    // ne montre que les chevaux avec écart positif et pas plus de 35% au Gagnant ;
-    // un cheval qui sort de ces critères est simplement masqué (pas supprimé) donc
-    // il réapparaît instantanément dès qu'il redevient éligible — calcul fait côté
-    // serveur, en continu
+    // ne montre que les GAINERS_TOP_N chevaux (6) avec la plus forte progression
+    // de part de marché (Gagnant) sur les 15 dernières secondes ; un cheval qui
+    // sort du classement est simplement masqué (pas supprimé) donc il réapparaît
+    // instantanément dès qu'il y revient — calcul fait côté serveur, en continu
     row.classList.toggle('row-hidden', !!r.hidden);
 
     rowsEl.appendChild(row);
@@ -510,6 +486,7 @@ function renderTable(rows){
       delete rowEls[num];
     }
   }
+
 
   rowsEl.querySelectorAll('.row:not(.row-hidden)').forEach(el=>{
     const prev = prevRects[el.dataset.num];
