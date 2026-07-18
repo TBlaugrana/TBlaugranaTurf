@@ -48,7 +48,8 @@ SPEED_THRESHOLD_PTS_PER_MIN = 6 # seuil au-dela duquel le badge eclair est affic
 REPROG_INTERVAL_S = 45          # recharge le programme en tache de fond toutes les 45s
 DEPART_CHANGE_THRESHOLD_S = 15  # ecart d'heure de depart a partir duquel on considere un retard/avance
 RACE_STALE_S = 5 * 60           # bascule vers la course suivante 5 min apres son depart
-FAVORI_MAX_PCT = 35.0           # chevaux masques au-dela de ce % au Gagnant
+DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
+GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
 # ---------------------------------------------------------------------------
 # Etat partage, lu par les threads HTTP (GET /api/state) et ecrit uniquement
@@ -243,10 +244,22 @@ class Tracker:
                 target[num] = {"nom": p.get("nom") or f"#{num}", "ratio": ratio, "favoris": bool(p.get("favoris"))}
         return gagnant_map, place_map
 
-    def compute_ecart(self, g, p):
-        if g is None or p is None:
+    def get_value_at(self, num, target_t):
+        """Renvoie la probabilite Gagnant (%) historique la plus proche de l'instant
+        cible (utilise pour comparer avec 'il y a 15s'), ou None si on n'a pas encore
+        assez d'historique pour ce cheval (suivi demarre depuis moins de 15s)."""
+        hist = self.odds_history.get(num)
+        if not hist:
             return None
-        return g - p
+        if hist[0][0] > target_t:
+            return None  # pas encore assez d'historique
+        best_p = hist[0][1]
+        for t, p in hist:
+            if t <= target_t:
+                best_p = p
+            else:
+                break
+        return best_p
 
     def update_speed_history(self, gagnant_map):
         now = time.time()
@@ -277,55 +290,55 @@ class Tracker:
         return " · ".join(parts)
 
     def handle_odds(self, data):
-        gagnant_map, place_map = self.parse_citations(data)
-        nums = set(gagnant_map.keys()) | set(place_map.keys())
+        gagnant_map, _place_map = self.parse_citations(data)  # place n'est plus utilise
+        nums = set(gagnant_map.keys())
         if not nums:
             return
 
         for num in nums:
-            nom = (gagnant_map.get(num) or {}).get("nom") or (place_map.get(num) or {}).get("nom") or f"#{num}"
-            self.horse_names[num] = nom
+            self.horse_names[num] = gagnant_map[num]["nom"]
             if num not in self.favoris_order:
                 self.favoris_order.append(num)
 
-        speed_map = self.update_speed_history(gagnant_map)
+        now = time.time()
+        speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous
+
+        # Pour chaque cheval connu : cote Gagnant actuelle, cote Gagnant il y a
+        # ~15s, et la variation entre les deux (part de marche gagnee/perdue).
+        deltas = {}
+        for num in self.favoris_order:
+            g = gagnant_map.get(num)
+            cote_g = g["ratio"] if g else None
+            cote_g15 = self.get_value_at(num, now - DELTA_WINDOW_S) if cote_g is not None else None
+            delta15 = (cote_g - cote_g15) if (cote_g is not None and cote_g15 is not None) else None
+            deltas[num] = (cote_g, cote_g15, delta15)
 
         def sort_key(n):
-            e = self.compute_ecart((gagnant_map.get(n) or {}).get("ratio"), (place_map.get(n) or {}).get("ratio"))
-            return (e is None, -(e if e is not None else 0))
+            d = deltas[n][2]
+            return (d is None, -(d if d is not None else 0))
 
-        # Classement par ecart (Gagnant % - Place %) decroissant, chevaux sans ecart calculable en fin de liste.
+        # Classement par plus forte progression de part de marche (Gagnant) sur
+        # les 15 dernieres secondes, decroissant ; seuls les GAINERS_TOP_N premiers
+        # restent visibles (les autres sont masques, pas supprimes, donc ils
+        # reapparaissent instantanement des qu'ils remontent dans le classement).
         display_order = sorted(self.favoris_order, key=sort_key)
 
         rows = []
         for idx, num in enumerate(display_order):
             g = gagnant_map.get(num)
-            p = place_map.get(num)
-            cote_g = g["ratio"] if g else None
-            cote_p = p["ratio"] if p else None
-            ecart = self.compute_ecart(cote_g, cote_p)
+            cote_g, cote_g15, delta15 = deltas[num]
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN
-            # Regles d'affichage :
-            #  - masque des que la cote Gagnant depasse FAVORI_MAX_PCT (35%)
-            #  - sinon, ne reste visible que si l'ecart (Gagnant - Place) est positif
-            # (au lieu d'un top 5 fixe) — un cheval qui repasse hors criteres est
-            # masque, pas supprime, donc il reapparait instantanement des qu'il
-            # redevient eligible.
-            is_too_favori = cote_g is not None and cote_g > FAVORI_MAX_PCT
-            has_positive_ecart = ecart is not None and ecart > 0
-            hidden = is_too_favori or not has_positive_ecart
-
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
                 "coteG": cote_g,
-                "coteP": cote_p,
-                "ecart": ecart,
+                "coteG15": cote_g15,
+                "delta15": delta15,
                 "isFavori": bool(g and g.get("favoris")),
                 "isFast": is_fast,
                 "speed": spd,
-                "hidden": hidden,
+                "hidden": idx >= GAINERS_TOP_N,
             })
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
