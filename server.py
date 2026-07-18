@@ -266,9 +266,9 @@ class Tracker:
         speed = {}
         for num, info in gagnant_map.items():
             cote = info["ratio"]
-            if not cote or cote <= 0:
+            if cote is None:
                 continue
-            prob = 100.0 / cote
+            prob = cote  # "ratio" est deja le % Gagnant affiche, pas une cote a inverser
             hist = self.odds_history.setdefault(num, [])
             hist.append((now, prob))
             while len(hist) > 1 and now - hist[0][0] > SPEED_WINDOW_S:
