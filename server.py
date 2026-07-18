@@ -52,10 +52,8 @@ DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
 BIGMOVE_THRESHOLD_PTS = 2.0      # ecart (en points de %) a partir duquel le badge "gros ecart" s'affiche
-                                  # comparaison : cote actuelle vs plus bas/plus haut jamais observe pour ce
-                                  # cheval depuis le debut du suivi (pas une fenetre de temps fixe -- ca capte
-                                  # aussi bien un a-coup brutal qu'une derive lente et continue sur plusieurs
-                                  # minutes, qu'une fenetre de 2 min a duree fixe pourrait manquer)
+BIGMOVE_ALERT_LEAD_S = 120       # les alertes ne se declenchent que dans les 2 dernieres minutes avant le
+                                  # depart (avant, les mouvements sont frequents mais les enjeux sont faibles)
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
@@ -422,7 +420,14 @@ class Tracker:
             # reste marque pour le reste de la course. Sans ca, la ligne peut
             # redescendre dans le classement / sortir du tableau au cycle
             # suivant et le signal passe inaperçu.
-            if delta15 is not None and abs(delta15) >= BIGMOVE_THRESHOLD_PTS:
+            # L'alerte ne se declenche que dans les BIGMOVE_ALERT_LEAD_S (2 min)
+            # avant le depart : avant ca, les mouvements sont frequents mais
+            # les enjeux sont trop faibles pour etre significatifs.
+            in_alert_window = (
+                self.depart_ts is not None
+                and (self.depart_ts - now) <= BIGMOVE_ALERT_LEAD_S
+            )
+            if in_alert_window and delta15 is not None and abs(delta15) >= BIGMOVE_THRESHOLD_PTS:
                 prev = self.bigmove_seen.get(num)
                 if prev is None or abs(delta15) > abs(prev["delta"]):
                     self.bigmove_seen[num] = {"delta": delta15, "at": now}
