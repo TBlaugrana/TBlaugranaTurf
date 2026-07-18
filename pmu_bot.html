@@ -474,9 +474,11 @@ function renderTable(rows){
       }
     }
 
-    // Badge "gros écart" : cheval qui a franchi ±2% sur une fenêtre de 2 minutes
-    // à un moment de la course. Le marquage est DÉFINITIF (calculé côté serveur) :
-    // une fois franchi, le badge reste affiché même si l'écart redescend ensuite.
+    // Badge "gros écart" : cheval dont la colonne "Ecart" (variation sur les
+    // 15 dernières secondes) a atteint ±2% à un moment de la course. Le
+    // marquage est DÉFINITIF (calculé côté serveur) : une fois franchi, le
+    // badge reste affiché pour toute la course, même si l'écart instantané
+    // redescend ensuite.
     const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
     const isBigMove = !!r.isBigMove;
     const bigmoveEl = row.querySelector('.bigmove-badge');
@@ -484,7 +486,7 @@ function renderTable(rows){
       bigmoveEl.style.display = isBigMove ? 'inline' : 'none';
       if(isBigMove && delta120 !== undefined){
         bigmoveEl.textContent = delta120 > 0 ? '🔺' : '🔻';
-        bigmoveEl.title = `Pic observé : ${delta120 >= 0 ? '+' : ''}${delta120.toFixed(2)}% sur 2 min (Gagnant) — marqué pour toute la course`;
+        bigmoveEl.title = `Ecart ${delta120 >= 0 ? '+' : ''}${delta120.toFixed(2)}% atteint (Gagnant) — marqué pour toute la course`;
       }
     }
     row.classList.toggle('row-bigmove', isBigMove);
