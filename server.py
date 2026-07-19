@@ -491,7 +491,7 @@ class Tracker:
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PCT_PER_MIN
 
-            # Marquage DEFINITIF : des que la colonne "Ecart" (delta15, la
+            # Marquage DEFINITIF : des que la colonne "Δ 15s" (delta15, la
             # variation RELATIVE sur les 15 dernieres secondes) atteint le
             # seuil BIGMOVE_THRESHOLD_PCT (hausse de part de marche
             # uniquement — les baisses ne sont plus signalees), le cheval
