@@ -52,6 +52,15 @@ RACE_STALE_S = 5 * 60           # bascule vers la course suivante 5 min apres so
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
+# En dessous de ce seuil de cote Gagnant (probabilite implicite, en %), un
+# cheval est considere comme un "tocard" sans chance reelle et masque du
+# tableau — meme s'il fait partie des plus fortes progressions sur 15s.
+# Exception : un cheval deja marque "bigmove" (delta >= BIGMOVE_THRESHOLD_PCT
+# dans les 2 dernieres minutes avant le depart) reste visible malgre tout,
+# car un outsider qui bouge fort juste avant le depart est justement le
+# signal qu'on veut voir, meme parti d'une cote tres faible.
+LONGSHOT_HIDE_THRESHOLD_PCT = 5.0
+
 # Lissage exponentiel (EMA) applique a la probabilite implicite (Gagnant) avant
 # tout calcul de delta/vitesse, pour filtrer le bruit tick-par-tick (la cote
 # PMU est interrogee 2x/s et peut micro-fluctuer sans signification). Span de
@@ -512,6 +521,10 @@ class Tracker:
             bigmove = self.bigmove_seen.get(num)
             is_bigmove = bigmove is not None
 
+            # tocard = cote Gagnant actuelle sous le seuil -> masque, sauf
+            # s'il est marque bigmove (voir commentaire sur la constante)
+            is_longshot = cote_g is not None and cote_g < LONGSHOT_HIDE_THRESHOLD_PCT
+
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
@@ -525,7 +538,8 @@ class Tracker:
                 "speed": spd,
                 # un cheval marque definitivement reste toujours visible, meme
                 # s'il n'est plus dans le top des plus fortes progressions sur 15s
-                "hidden": (idx >= GAINERS_TOP_N) and not is_bigmove,
+                # ou si sa cote est sous le seuil "tocard"
+                "hidden": ((idx >= GAINERS_TOP_N) or is_longshot) and not is_bigmove,
             })
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
