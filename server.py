@@ -416,10 +416,11 @@ class Tracker:
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN
 
             # Marquage DEFINITIF : des que la colonne "Ecart" (delta15, la
-            # variation sur les 15 dernieres secondes) atteint +/-2%, le cheval
-            # reste marque pour le reste de la course. Sans ca, la ligne peut
-            # redescendre dans le classement / sortir du tableau au cycle
-            # suivant et le signal passe inaperçu.
+            # variation sur les 15 dernieres secondes) atteint +2% (hausse de
+            # part de marche uniquement — les baisses ne sont plus signalees),
+            # le cheval reste marque pour le reste de la course. Sans ca, la
+            # ligne peut redescendre dans le classement / sortir du tableau au
+            # cycle suivant et le signal passe inaperçu.
             # L'alerte ne se declenche que dans les BIGMOVE_ALERT_LEAD_S (2 min)
             # avant le depart : avant ca, les mouvements sont frequents mais
             # les enjeux sont trop faibles pour etre significatifs.
@@ -427,9 +428,9 @@ class Tracker:
                 self.depart_ts is not None
                 and (self.depart_ts - now) <= BIGMOVE_ALERT_LEAD_S
             )
-            if in_alert_window and delta15 is not None and abs(delta15) >= BIGMOVE_THRESHOLD_PTS:
+            if in_alert_window and delta15 is not None and delta15 >= BIGMOVE_THRESHOLD_PTS:
                 prev = self.bigmove_seen.get(num)
-                if prev is None or abs(delta15) > abs(prev["delta"]):
+                if prev is None or delta15 > prev["delta"]:
                     self.bigmove_seen[num] = {"delta": delta15, "at": now}
             bigmove = self.bigmove_seen.get(num)
             is_bigmove = bigmove is not None
