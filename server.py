@@ -23,6 +23,7 @@ import http.server
 import socketserver
 import http.client
 import json
+import math
 import os
 import threading
 import time
@@ -44,14 +45,37 @@ PMU_CIT_PREFIX = "/rest/client/7/"
 REFRESH_INTERVAL_S = 0.5        # delai minimal entre deux cycles de poll des cotes
 FETCH_TIMEOUT_S = 6             # abandonne un appel PMU trop lent
 SPEED_WINDOW_S = 45             # fenetre glissante pour calculer la vitesse de variation (Gagnant)
-SPEED_THRESHOLD_PTS_PER_MIN = 6 # seuil au-dela duquel le badge eclair est affiche
+SPEED_THRESHOLD_PCT_PER_MIN = 25 # seuil (variation RELATIVE, en %/min) au-dela duquel le badge eclair est affiche
 REPROG_INTERVAL_S = 45          # recharge le programme en tache de fond toutes les 45s
 DEPART_CHANGE_THRESHOLD_S = 15  # ecart d'heure de depart a partir duquel on considere un retard/avance
 RACE_STALE_S = 5 * 60           # bascule vers la course suivante 5 min apres son depart
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
-BIGMOVE_THRESHOLD_PTS = 2.0      # ecart (en points de %) a partir duquel le badge "gros ecart" s'affiche
+# Lissage exponentiel (EMA) applique a la probabilite implicite (Gagnant) avant
+# tout calcul de delta/vitesse, pour filtrer le bruit tick-par-tick (la cote
+# PMU est interrogee 2x/s et peut micro-fluctuer sans signification). Span de
+# 5 a 10s recommande ; on prend une valeur mediane. L'EMA est ici a "temps
+# continu" (pondere par le delai reel ecoule entre deux points, pas par un
+# nombre fixe de ticks) car l'intervalle entre deux cotes n'est pas garanti
+# constant (latence reseau, cache PMU, etc.).
+EMA_SPAN_S = 7.0
+
+# En dessous de cette duree d'historique accumule, on ne calcule PAS de
+# vitesse : extrapoler un taux logarithmique sur une fenetre de 1-2 secondes
+# puis le ramener "par minute" (x30, x60...) avant de repasser par exp() fait
+# exploser artificiellement le resultat (ex: un cheval qui bouge de +0.1 point
+# en 1 seconde donnerait un taux astronomique une fois annualise a la minute,
+# sans rapport avec un vrai mouvement de marche). Il faut laisser le temps a
+# l'historique de s'accumuler un minimum avant que "vitesse" ait un sens.
+SPEED_MIN_WINDOW_S = 10.0
+
+# Seuil de "gros ecart" exprime en variation RELATIVE (%) sur la fenetre de
+# 15s, et non plus en points absolus : un outsider qui passe de 2% a 4% de
+# probabilite implicite (+100% relatif, mais seulement +2 points absolus)
+# est un signal au moins aussi fort qu'un favori qui passe de 40% a 42%
+# (+5% relatif). Le calcul en relatif remet les deux cas a la meme echelle.
+BIGMOVE_THRESHOLD_PCT = 15.0
 BIGMOVE_ALERT_LEAD_S = 120       # les alertes ne se declenchent que dans les 2 dernieres minutes avant le
                                   # depart (avant, les mouvements sont frequents mais les enjeux sont faibles)
 
@@ -141,8 +165,10 @@ class Tracker:
 
         self.favoris_order = []   # ordre de suivi des chevaux (num en string)
         self.horse_names = {}
-        self.odds_history = {}    # num -> [(t, prob), ...]
-        self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil 2% franchi (marquage definitif)
+        self.odds_history = {}    # num -> [(t, prob_lissee_ema), ...]
+        self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
+        self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
+        self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
         self.last_reprog = 0.0
         self.last_save = 0.0
 
@@ -161,6 +187,8 @@ class Tracker:
                 "favoris_order": self.favoris_order,
                 "horse_names": self.horse_names,
                 "odds_history": self.odds_history,
+                "ema_prob": self.ema_prob,
+                "ema_last_t": self.ema_last_t,
                 "bigmove_seen": self.bigmove_seen,
                 "saved_at": time.time(),
             }
@@ -201,6 +229,8 @@ class Tracker:
         self.favoris_order = snap.get("favoris_order") or []
         self.horse_names = snap.get("horse_names") or {}
         self.odds_history = snap.get("odds_history") or {}
+        self.ema_prob = snap.get("ema_prob") or {}
+        self.ema_last_t = snap.get("ema_last_t") or {}
         self.bigmove_seen = snap.get("bigmove_seen") or {}
         return self.selected_reunion is not None and self.selected_course is not None
 
@@ -271,6 +301,8 @@ class Tracker:
         self.favoris_order = []
         self.horse_names = {}
         self.odds_history = {}
+        self.ema_prob = {}
+        self.ema_last_t = {}
         self.bigmove_seen = {}
         set_state(rows=[], snapLine="📸 Rapports probables : en attente")
 
@@ -330,9 +362,10 @@ class Tracker:
         return gagnant_map, place_map
 
     def get_value_at(self, num, target_t):
-        """Renvoie la probabilite Gagnant (%) historique la plus proche de l'instant
-        cible (utilise pour comparer avec 'il y a 15s'), ou None si on n'a pas encore
-        assez d'historique pour ce cheval (suivi demarre depuis moins de 15s)."""
+        """Renvoie la probabilite Gagnant (%) lissee (EMA) historique la plus
+        proche de l'instant cible (utilise pour comparer avec 'il y a 15s'),
+        ou None si on n'a pas encore assez d'historique pour ce cheval (suivi
+        demarre depuis moins de 15s)."""
         hist = self.odds_history.get(num)
         if not hist:
             return None
@@ -347,22 +380,57 @@ class Tracker:
         return best_p
 
     def update_speed_history(self, gagnant_map):
+        """Met a jour, pour chaque cheval, la probabilite implicite lissee
+        (EMA) et calcule sa vitesse de variation RELATIVE (en %/min).
+
+        Pourquoi une EMA : la cote brute recue toutes les ~0.5s contient du
+        bruit de mesure (micro-arrondis, republications identiques...) qui
+        n'a aucune signification de marche. On lisse donc chaque nouvelle
+        valeur vers l'ancienne avec un poids qui depend du temps ecoule
+        (alpha = 1 - exp(-dt/EMA_SPAN_S)), ce qui revient a une moyenne
+        mobile exponentielle a "temps continu" : reactive si les mises a
+        jour sont rapprochees, plus lente si elles sont espacees.
+
+        Pourquoi une vitesse en relatif (log) plutot qu'en points absolus :
+        un outsider a 2% qui passe a 3% (+1 point, +50% relatif) et un
+        favori a 40% qui passe a 41% (+1 point, +2.5% relatif) n'ont pas le
+        meme poids informationnel ; le log-delta traite les deux de facon
+        symetrique et proportionnelle, ce qui est la pratique standard pour
+        comparer des mouvements de probabilite/cote a des niveaux tres
+        differents.
+        """
         now = time.time()
         speed = {}
         for num, info in gagnant_map.items():
-            cote = info["ratio"]
-            if cote is None:
+            cote = info["ratio"]  # "ratio" est deja le % Gagnant affiche (probabilite implicite)
+            if cote is None or cote <= 0:
                 continue
-            prob = cote  # "ratio" est deja le % Gagnant affiche, pas une cote a inverser
+
+            # -- lissage EMA (ponderee par le temps reellement ecoule) --------
+            prev_ema = self.ema_prob.get(num)
+            prev_t = self.ema_last_t.get(num)
+            if prev_ema is None or prev_t is None:
+                ema = cote  # premier point connu pour ce cheval : pas de lissage possible
+            else:
+                dt = max(now - prev_t, 0.001)
+                alpha = 1 - math.exp(-dt / EMA_SPAN_S)
+                ema = prev_ema + alpha * (cote - prev_ema)
+            self.ema_prob[num] = ema
+            self.ema_last_t[num] = now
+
             hist = self.odds_history.setdefault(num, [])
-            hist.append((now, prob))
+            hist.append((now, ema))
             while len(hist) > 1 and now - hist[0][0] > HISTORY_RETENTION_S:
                 hist.pop(0)
+
+            # -- vitesse relative (log-delta / minute, converti en %/min) -----
             if len(hist) >= 2:
                 first_t, first_p = hist[0]
-                minutes = (now - first_t) / 60.0
-                if minutes > 0:
-                    speed[num] = (prob - first_p) / minutes
+                elapsed_s = now - first_t
+                minutes = elapsed_s / 60.0
+                if elapsed_s >= SPEED_MIN_WINDOW_S and first_p > 0 and ema > 0:
+                    log_rate = (math.log(ema) - math.log(first_p)) / minutes
+                    speed[num] = (math.exp(log_rate) - 1) * 100  # en %/min
         return speed
 
     def build_tote_label(self, nb_live=None):
@@ -388,15 +456,23 @@ class Tracker:
         now = time.time()
         speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous
 
-        # Pour chaque cheval connu : cote Gagnant actuelle, cote Gagnant il y a
-        # ~15s, et la variation entre les deux (part de marche gagnee/perdue).
+        # Pour chaque cheval connu : cote Gagnant actuelle (brute, telle
+        # qu'affichee par le PMU), probabilite lissee (EMA) il y a ~15s, et
+        # la variation RELATIVE (%) entre les deux (part de marche
+        # gagnee/perdue, normalisee pour etre comparable entre favoris et
+        # outsiders). Le delta est calcule sur la serie lissee (EMA) pour ne
+        # pas reagir a du bruit tick-par-tick ; seule la cote affichee
+        # ("coteG") reste la valeur brute instantanee du PMU.
         deltas = {}
         for num in self.favoris_order:
             g = gagnant_map.get(num)
             cote_g = g["ratio"] if g else None
-            cote_g15 = self.get_value_at(num, now - DELTA_WINDOW_S) if cote_g is not None else None
-            delta15 = (cote_g - cote_g15) if (cote_g is not None and cote_g15 is not None) else None
-            deltas[num] = (cote_g, cote_g15, delta15)
+            ema_now = self.ema_prob.get(num)
+            ema_15 = self.get_value_at(num, now - DELTA_WINDOW_S) if ema_now is not None else None
+            delta15 = None
+            if ema_now is not None and ema_15 is not None and ema_15 > 0 and ema_now > 0:
+                delta15 = (math.exp(math.log(ema_now) - math.log(ema_15)) - 1) * 100  # variation relative en %
+            deltas[num] = (cote_g, ema_15, delta15)
 
         def sort_key(n):
             d = deltas[n][2]
@@ -413,14 +489,15 @@ class Tracker:
             g = gagnant_map.get(num)
             cote_g, cote_g15, delta15 = deltas[num]
             spd = speed_map.get(num)
-            is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN
+            is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PCT_PER_MIN
 
             # Marquage DEFINITIF : des que la colonne "Ecart" (delta15, la
-            # variation sur les 15 dernieres secondes) atteint +2% (hausse de
-            # part de marche uniquement — les baisses ne sont plus signalees),
-            # le cheval reste marque pour le reste de la course. Sans ca, la
-            # ligne peut redescendre dans le classement / sortir du tableau au
-            # cycle suivant et le signal passe inaperçu.
+            # variation RELATIVE sur les 15 dernieres secondes) atteint le
+            # seuil BIGMOVE_THRESHOLD_PCT (hausse de part de marche
+            # uniquement — les baisses ne sont plus signalees), le cheval
+            # reste marque pour le reste de la course. Sans ca, la ligne peut
+            # redescendre dans le classement / sortir du tableau au cycle
+            # suivant et le signal passe inaperçu.
             # L'alerte ne se declenche que dans les BIGMOVE_ALERT_LEAD_S (2 min)
             # avant le depart : avant ca, les mouvements sont frequents mais
             # les enjeux sont trop faibles pour etre significatifs.
@@ -428,7 +505,7 @@ class Tracker:
                 self.depart_ts is not None
                 and (self.depart_ts - now) <= BIGMOVE_ALERT_LEAD_S
             )
-            if in_alert_window and delta15 is not None and delta15 >= BIGMOVE_THRESHOLD_PTS:
+            if in_alert_window and delta15 is not None and delta15 >= BIGMOVE_THRESHOLD_PCT:
                 prev = self.bigmove_seen.get(num)
                 if prev is None or delta15 > prev["delta"]:
                     self.bigmove_seen[num] = {"delta": delta15, "at": now}
