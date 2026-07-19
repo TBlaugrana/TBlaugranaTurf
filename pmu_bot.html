@@ -204,8 +204,8 @@
   .table-wrap{ flex:1; }
   .table-head{
     display:grid;
-    grid-template-columns: 1.15fr 76px 76px 76px;
-    gap:6px;
+    grid-template-columns: 1.1fr 64px 64px 64px 68px;
+    gap:5px;
     padding:0 12px 8px;
     font-size:12px;
     text-transform:uppercase;
@@ -223,13 +223,13 @@
   }
   .row{
     display:grid;
-    grid-template-columns: 1.15fr 76px 76px 76px;
-    gap:6px;
+    grid-template-columns: 1.1fr 64px 64px 64px 68px;
+    gap:5px;
     align-items:center;
     background:var(--surface);
     border:1px solid var(--border);
     border-radius:9px;
-    padding:12px 14px;
+    padding:12px 10px;
     min-height:51px;
     box-sizing:border-box;
     transition: transform .35s ease, background-color .4s ease;
@@ -307,6 +307,22 @@
   .var.down{ color:var(--danger); background:var(--danger-bg); }
   .var.flat{ color:var(--text-dim); background:var(--surface-alt); }
 
+  .vitesse{
+    font-family:'JetBrains Mono',monospace;
+    font-variant-numeric:tabular-nums;
+    font-size:13px;
+    font-weight:700;
+    text-align:center;
+    border-radius:7px;
+    padding:6px 4px;
+    white-space:nowrap;
+    line-height:1.2;
+  }
+  .vitesse.up{ color:var(--success); background:var(--success-bg); }
+  .vitesse.down{ color:var(--danger); background:var(--danger-bg); }
+  .vitesse.flat{ color:var(--text-dim); background:var(--surface-alt); }
+  .vitesse.vitesse-fast{ box-shadow: inset 0 0 0 1.5px currentColor; }
+
   .empty{
     text-align:center;
     color:var(--text-dim);
@@ -336,7 +352,7 @@
 
   <div class="table-wrap">
     <div class="table-head">
-      <span>Cheval</span><span>Cité G</span><span>Δ 15s</span><span>Ecart</span>
+      <span>Cheval</span><span>Cité G</span><span>Δ 15s</span><span>Ecart</span><span>Vitesse</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
   </div>
@@ -394,10 +410,11 @@ function buildRow(num){
   row.className = 'row';
   row.dataset.num = num;
   row.innerHTML = `
-    <div class="horse"><span class="num-wrap"><span class="num-badge"></span><span class="bigmove-star" style="display:none;">★</span></span><span class="horse-name"></span><span class="speed-badge" style="display:none;"></span></div>
+    <div class="horse"><span class="num-wrap"><span class="num-badge"></span><span class="bigmove-star" style="display:none;">★</span></span><span class="horse-name"></span></div>
     <div class="cote"></div>
     <div class="cote-prev"></div>
     <div class="var flat">—</div>
+    <div class="vitesse flat">—</div>
   `;
   row.querySelector('.num-badge').textContent = num;
   return row;
@@ -474,29 +491,36 @@ function renderTable(rows){
 
     const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
     const isFast = !!r.isFast;
-    const speedEl = row.querySelector('.speed-badge');
-    if(speedEl){
-      speedEl.style.display = isFast ? 'inline' : 'none';
-      if(isFast && spd !== undefined){
-        speedEl.textContent = '⚡';
-        speedEl.style.color = spd > 0 ? 'var(--danger)' : 'var(--success)';
-        speedEl.title = `Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} pts de probabilité/min (Gagnant)`;
-      }
+    const vitesseEl = row.querySelector('.vitesse');
+    if(vitesseEl){
+      const vitesseStr = spd !== undefined ? `${spd >= 0 ? '+' : ''}${spd.toFixed(1)}%` : "—";
+      if(vitesseEl.textContent !== vitesseStr) vitesseEl.textContent = vitesseStr;
+      vitesseEl.classList.remove('up','down','flat');
+      if(spd === undefined) vitesseEl.classList.add('flat');
+      else if(spd > 0) vitesseEl.classList.add('up');
+      else if(spd < 0) vitesseEl.classList.add('down');
+      else vitesseEl.classList.add('flat');
+      vitesseEl.title = isFast
+        ? `⚡ Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} %/min (variation relative de la probabilité implicite lissée, fenêtre ≤45s)`
+        : `Vitesse de variation relative : ${spd !== undefined ? (spd >= 0 ? '+' : '') + spd.toFixed(1) : '—'} %/min (probabilité implicite lissée, fenêtre ≤45s)`;
+      vitesseEl.classList.toggle('vitesse-fast', isFast);
     }
 
-    // Badge "gros écart" : cheval dont la colonne "Ecart" (variation sur les
-    // 15 dernières secondes) a atteint ±2% à un moment de la course (dans la
-    // fenêtre active). Le marquage est DÉFINITIF (calculé côté serveur) : une
-    // fois franchi, l'étoile reste affichée pour toute la course. Placée en
-    // petit dans le coin du rond numéroté (pas à côté du nom) pour ne pas
-    // grignoter la place déjà limitée du nom du cheval sur mobile.
+    // Badge "gros écart" : cheval dont la colonne "Ecart" (variation RELATIVE
+    // sur les 15 dernières secondes, calculée sur la probabilité implicite
+    // lissée) a atteint le seuil (défini côté serveur, ~15% relatif) à un
+    // moment de la course (dans la fenêtre active). Le marquage est DÉFINITIF
+    // (calculé côté serveur) : une fois franchi, l'étoile reste affichée pour
+    // toute la course. Placée en petit dans le coin du rond numéroté (pas à
+    // côté du nom) pour ne pas grignoter la place déjà limitée du nom du
+    // cheval sur mobile.
     const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
     const isBigMove = !!r.isBigMove;
     const bigmoveEl = row.querySelector('.bigmove-star');
     if(bigmoveEl){
       bigmoveEl.style.display = isBigMove ? 'inline' : 'none';
       if(isBigMove && delta120 !== undefined){
-        bigmoveEl.title = `Ecart ${delta120 >= 0 ? '+' : ''}${delta120.toFixed(2)}% atteint (Gagnant) — marqué pour toute la course`;
+        bigmoveEl.title = `Écart relatif ${delta120 >= 0 ? '+' : ''}${delta120.toFixed(1)}% atteint (Gagnant) — marqué pour toute la course`;
       }
     }
     row.classList.toggle('row-bigmove', isBigMove);
