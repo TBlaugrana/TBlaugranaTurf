@@ -204,8 +204,8 @@
   .table-wrap{ flex:1; }
   .table-head{
     display:grid;
-    grid-template-columns: 1.1fr 64px 64px 64px 68px;
-    gap:5px;
+    grid-template-columns: 1.2fr 74px 80px 80px;
+    gap:6px;
     padding:0 12px 8px;
     font-size:12px;
     text-transform:uppercase;
@@ -223,8 +223,8 @@
   }
   .row{
     display:grid;
-    grid-template-columns: 1.1fr 64px 64px 64px 68px;
-    gap:5px;
+    grid-template-columns: 1.2fr 74px 80px 80px;
+    gap:6px;
     align-items:center;
     background:var(--surface);
     border:1px solid var(--border);
@@ -282,14 +282,6 @@
     font-weight:700;
     text-align:center;
     color:var(--text);
-  }
-  .cote-prev{
-    font-family:'JetBrains Mono',monospace;
-    font-variant-numeric:tabular-nums;
-    font-size:16px;
-    font-weight:600;
-    text-align:center;
-    color:var(--text-dim);
   }
   .fav-badge{ flex:none; font-size:12px; margin-left:2px; color:var(--accent-2); }
   .var{
@@ -352,7 +344,7 @@
 
   <div class="table-wrap">
     <div class="table-head">
-      <span>Cheval</span><span>Cité G</span><span>Δ 15s</span><span>Ecart</span><span>Vitesse</span>
+      <span>Cheval</span><span>Cité G</span><span>Δ 15s</span><span>Vitesse</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
   </div>
@@ -410,9 +402,8 @@ function buildRow(num){
   row.className = 'row';
   row.dataset.num = num;
   row.innerHTML = `
-    <div class="horse"><span class="num-wrap"><span class="num-badge"></span><span class="bigmove-star" style="display:none;">★</span></span><span class="horse-name"></span></div>
+    <div class="horse"><span class="num-wrap"><span class="num-badge"></span><span class="bigmove-star" style="display:none;">🔥</span></span><span class="horse-name"></span></div>
     <div class="cote"></div>
-    <div class="cote-prev"></div>
     <div class="var flat">—</div>
     <div class="vitesse flat">—</div>
   `;
@@ -437,12 +428,10 @@ function renderTable(rows){
     const num = r.num;
     const nom = r.nom || `#${num}`;
     const coteG = (r.coteG === null || r.coteG === undefined) ? undefined : r.coteG;
-    const coteG15 = (r.coteG15 === null || r.coteG15 === undefined) ? undefined : r.coteG15;
     const delta15 = (r.delta15 === null || r.delta15 === undefined) ? undefined : r.delta15;
 
-    const coteGStr = coteG !== undefined ? `${coteG.toFixed(2)}%` : "—";
-    const coteG15Str = coteG15 !== undefined ? `${coteG15.toFixed(2)}%` : "—";
-    const delta15Str = delta15 !== undefined ? `${delta15 >= 0 ? '+' : ''}${delta15.toFixed(2)}%` : "—";
+    const coteGStr = coteG !== undefined ? `${coteG.toFixed(1)}%` : "—";
+    const delta15Str = delta15 !== undefined ? `${delta15 >= 0 ? '+' : ''}${delta15.toFixed(1)}%` : "—";
 
     let row = rowEls[num];
     if(!row){
@@ -478,9 +467,6 @@ function renderTable(rows){
     }
     if(coteG !== undefined) lastGagnant[num] = coteG;
 
-    const cotePrevEl = row.querySelector('.cote-prev');
-    if(cotePrevEl.textContent !== coteG15Str) cotePrevEl.textContent = coteG15Str;
-
     const deltaEl = row.querySelector('.var');
     if(deltaEl.textContent !== delta15Str) deltaEl.textContent = delta15Str;
     deltaEl.classList.remove('up','down','flat');
@@ -506,14 +492,15 @@ function renderTable(rows){
       vitesseEl.classList.toggle('vitesse-fast', isFast);
     }
 
-    // Badge "gros écart" : cheval dont la colonne "Ecart" (variation RELATIVE
-    // sur les 15 dernières secondes, calculée sur la probabilité implicite
-    // lissée) a atteint le seuil (défini côté serveur, ~15% relatif) à un
-    // moment de la course (dans la fenêtre active). Le marquage est DÉFINITIF
-    // (calculé côté serveur) : une fois franchi, l'étoile reste affichée pour
-    // toute la course. Placée en petit dans le coin du rond numéroté (pas à
-    // côté du nom) pour ne pas grignoter la place déjà limitée du nom du
-    // cheval sur mobile.
+    // Badge "gros écart" (icône 🔥, distincte du ★ favori de marché) : cheval
+    // dont la colonne "Δ 15s" (variation RELATIVE sur les 15 dernières
+    // secondes, calculée sur la probabilité implicite lissée) a atteint le
+    // seuil (défini côté serveur, ~15% relatif) à un moment de la course
+    // (dans la fenêtre active). Le marquage est DÉFINITIF (calculé côté
+    // serveur) : une fois franchi, l'icône reste affichée pour toute la
+    // course. Placée en petit dans le coin du rond numéroté (pas à côté du
+    // nom) pour ne pas grignoter la place déjà limitée du nom du cheval sur
+    // mobile.
     const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
     const isBigMove = !!r.isBigMove;
     const bigmoveEl = row.querySelector('.bigmove-star');
