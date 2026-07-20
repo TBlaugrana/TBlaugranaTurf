@@ -204,46 +204,81 @@
   .table-wrap{ flex:1; }
   .table-head{
     display:grid;
-    grid-template-columns: 1.2fr 74px 80px 80px;
-    gap:6px;
-    padding:0 12px 8px;
-    font-size:12px;
+    grid-template-columns: 1fr 52px;
+    gap:8px;
+    align-items:end;
+    padding:0 12px 6px;
+    font-size:10px;
     text-transform:uppercase;
     letter-spacing:.08em;
     color:var(--text-dim);
     font-weight:700;
   }
-  .table-head span:not(:first-child){ text-align:center; }
+  .table-head .sub{
+    font-weight:500;
+    font-size:9px;
+    letter-spacing:.06em;
+    color:var(--text-dim);
+    opacity:.75;
+    display:block;
+    margin-top:1px;
+  }
+  .table-head span:last-child{ text-align:right; }
 
   #rows{
     display:flex;
     flex-direction:column;
-    gap:7px;
+    gap:6px;
     position:relative;
   }
   .row{
-    display:grid;
-    grid-template-columns: 1.2fr 74px 80px 80px;
-    gap:6px;
-    align-items:center;
+    position:relative;
     background:var(--surface);
     border:1px solid var(--border);
     border-radius:9px;
-    padding:12px 10px;
-    min-height:51px;
+    padding:9px 12px;
     box-sizing:border-box;
     transition: transform .35s ease, background-color .4s ease;
   }
   .row.row-hidden{ display:none; }
   .row.flash-up{ background:var(--success-bg); }
   .row.flash-down{ background:var(--danger-bg); }
+
+  /* Un seul signal visuel fort, réservé au cas où 🔥 gros écart ET
+     ⚡ mouvement rapide sont vrais EN MÊME TEMPS sur le même cheval.
+     Rien n'est affiché si un seul des deux critères est rempli. */
+  .row.row-valuebet{
+    border:2px solid var(--tote-fg);
+    background:linear-gradient(0deg, rgba(232,178,77,.12), rgba(232,178,77,.12)), var(--surface);
+    box-shadow:0 0 0 3px rgba(232,178,77,.16);
+  }
+  .valuebet-tag{
+    position:absolute;
+    top:-10px; left:10px;
+    background:var(--tote-bg);
+    color:var(--tote-fg);
+    font-family:'JetBrains Mono',monospace;
+    font-size:9.5px;
+    font-weight:700;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    padding:3px 8px;
+    border-radius:20px;
+    display:none;
+  }
+  .row.row-valuebet .valuebet-tag{ display:inline-block; }
+
+  .row-top{
+    display:flex;
+    align-items:center;
+    gap:9px;
+  }
   .horse{
     display:flex;
     align-items:center;
     gap:9px;
-    font-size:16px;
-    font-weight:600;
-    overflow:hidden;
+    flex:1;
+    min-width:0;
   }
   .num-badge{
     flex:none;
@@ -256,64 +291,45 @@
     font-weight:700;
     display:flex; align-items:center; justify-content:center;
   }
-  .horse-name{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .late-badge{ flex:none; font-size:12px; margin-left:2px; }
-  .speed-badge{ flex:none; font-size:13px; margin-left:2px; }
-  .speed-badge.speed-up{ filter: drop-shadow(0 0 0 var(--success)); }
-  .row.row-bigmove{ border-width:2px; }
-  .row.row-bigmove.bigmove-up{ border-color:var(--success); }
-  .row.row-bigmove.bigmove-down{ border-color:var(--danger); }
-  .num-wrap{ position:relative; flex:none; }
-  .bigmove-star{
-    position:absolute;
-    top:-3px; right:-4px;
-    font-size:10px;
-    line-height:1;
-    color:var(--text-dim);
-    text-shadow:0 0 0 var(--surface), 0 0 2px var(--surface), 0 0 2px var(--surface);
+  .horse-name{
+    flex:1;
+    min-width:0;
+    font-size:15.5px;
+    font-weight:600;
+    color:var(--text);
+    white-space:normal;
+    line-height:1.15;
   }
-  .row.bigmove-up .bigmove-star{ color:var(--success); }
-  .row.bigmove-down .bigmove-star{ color:var(--danger); }
+  .late-badge{ flex:none; font-size:12px; margin-left:2px; }
   .row-late{ border-style:dashed; }
   .cote{
+    flex:none;
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
-    font-size:15px;
     font-weight:700;
-    text-align:center;
-    color:var(--text);
+    font-size:15px;
+    color:var(--accent);
+    text-align:right;
+    min-width:44px;
   }
   .fav-badge{ flex:none; font-size:12px; margin-left:2px; color:var(--accent-2); }
-  .var{
-    font-family:'JetBrains Mono',monospace;
-    font-variant-numeric:tabular-nums;
-    font-size:17px;
-    font-weight:800;
-    text-align:center;
-    border-radius:7px;
-    padding:6px 5px;
-    white-space:nowrap;
-    line-height:1.2;
-  }
-  .var.up{ color:var(--success); background:var(--success-bg); }
-  .var.down{ color:var(--danger); background:var(--danger-bg); }
-  .var.flat{ color:var(--text-dim); background:var(--surface-alt); }
 
-  .vitesse{
+  .row-bottom{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin:5px 0 0 33px;
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
-    font-size:17px;
-    font-weight:800;
-    text-align:center;
-    border-radius:7px;
-    padding:6px 4px;
-    white-space:nowrap;
-    line-height:1.2;
+    font-size:11.5px;
   }
-  .vitesse.up{ color:var(--success); background:var(--success-bg); }
-  .vitesse.down{ color:var(--danger); background:var(--danger-bg); }
-  .vitesse.flat{ color:var(--text-dim); background:var(--surface-alt); }
-  .vitesse.vitesse-fast{ box-shadow: inset 0 0 0 1.5px currentColor; }
+  .stat{ display:flex; align-items:center; gap:3px; }
+  .stat .lbl{ text-transform:uppercase; font-size:9px; letter-spacing:.06em; color:var(--text-dim); opacity:.7; }
+  .var, .vitesse{ font-weight:700; }
+  .var.up, .vitesse.up{ color:var(--success); }
+  .var.down, .vitesse.down{ color:var(--danger); }
+  .var.flat, .vitesse.flat{ color:var(--text-dim); }
+  .stat-dot{ width:3px; height:3px; border-radius:50%; background:var(--border); }
 
   .empty{
     text-align:center;
@@ -344,7 +360,8 @@
 
   <div class="table-wrap">
     <div class="table-head">
-      <span>Cheval</span><span>Cité G</span><span>Δ 15s</span><span>Vitesse</span>
+      <span>Cheval <span class="sub">Δ15s · vitesse</span></span>
+      <span>Cité G</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
   </div>
@@ -402,10 +419,19 @@ function buildRow(num){
   row.className = 'row';
   row.dataset.num = num;
   row.innerHTML = `
-    <div class="horse"><span class="num-wrap"><span class="num-badge"></span><span class="bigmove-star" style="display:none;">🔥</span></span><span class="horse-name"></span></div>
-    <div class="cote"></div>
-    <div class="var flat">—</div>
-    <div class="vitesse flat">—</div>
+    <span class="valuebet-tag">🔥⚡ VALUEBET ⚡ 🔥</span>
+    <div class="row-top">
+      <div class="horse">
+        <span class="num-badge"></span>
+        <span class="horse-name"></span>
+      </div>
+      <div class="cote"></div>
+    </div>
+    <div class="row-bottom">
+      <span class="stat"><span class="lbl">Δ</span><span class="var flat">—</span></span>
+      <span class="stat-dot"></span>
+      <span class="stat"><span class="lbl">Vit.</span><span class="vitesse flat">—</span></span>
+    </div>
   `;
   row.querySelector('.num-badge').textContent = num;
   return row;
@@ -489,30 +515,23 @@ function renderTable(rows){
       vitesseEl.title = isFast
         ? `⚡ Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} %/min (variation relative de la probabilité implicite lissée, fenêtre ≤45s)`
         : `Vitesse de variation relative : ${spd !== undefined ? (spd >= 0 ? '+' : '') + spd.toFixed(1) : '—'} %/min (probabilité implicite lissée, fenêtre ≤45s)`;
-      vitesseEl.classList.toggle('vitesse-fast', isFast);
     }
 
-    // Badge "gros écart" (icône 🔥, distincte du ★ favori de marché) : cheval
-    // dont la colonne "Δ 15s" (variation RELATIVE sur les 15 dernières
-    // secondes, calculée sur la probabilité implicite lissée) a atteint le
-    // seuil (défini côté serveur, ~15% relatif) à un moment de la course
-    // (dans la fenêtre active). Le marquage est DÉFINITIF (calculé côté
-    // serveur) : une fois franchi, l'icône reste affichée pour toute la
-    // course. Placée en petit dans le coin du rond numéroté (pas à côté du
-    // nom) pour ne pas grignoter la place déjà limitée du nom du cheval sur
-    // mobile.
+    // Signal "VALUEBET" : ne s'affiche QUE quand les deux critères sont
+    // vrais EN MÊME TEMPS sur le même cheval — 🔥 gros écart (Δ15s ≥ seuil,
+    // marqué à vie pour la course) ET ⚡ mouvement rapide (vitesse ≥ seuil,
+    // état du moment). Un seul des deux critères rempli ne déclenche plus
+    // aucune décoration ; le texte Δ15s/Vitesse reste simplement coloré.
     const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
     const isBigMove = !!r.isBigMove;
-    const bigmoveEl = row.querySelector('.bigmove-star');
-    if(bigmoveEl){
-      bigmoveEl.style.display = isBigMove ? 'inline' : 'none';
-      if(isBigMove && delta120 !== undefined){
-        bigmoveEl.title = `Écart relatif ${delta120 >= 0 ? '+' : ''}${delta120.toFixed(1)}% atteint (Gagnant) — marqué pour toute la course`;
-      }
+    const isValuebet = isBigMove && isFast;
+    const valuebetEl = row.querySelector('.valuebet-tag');
+    if(valuebetEl && isValuebet){
+      const deltaTxt = delta120 !== undefined ? `${delta120 >= 0 ? '+' : ''}${delta120.toFixed(1)}%` : '—';
+      const spdTxt = spd !== undefined ? `${spd >= 0 ? '+' : ''}${spd.toFixed(1)}%/min` : '—';
+      valuebetEl.title = `Gros écart (${deltaTxt}) + mouvement rapide (${spdTxt}) en même temps`;
     }
-    row.classList.toggle('row-bigmove', isBigMove);
-    row.classList.toggle('bigmove-up', isBigMove && delta120 !== undefined && delta120 > 0);
-    row.classList.toggle('bigmove-down', isBigMove && delta120 !== undefined && delta120 < 0);
+    row.classList.toggle('row-valuebet', isValuebet);
 
     // ne montre que les GAINERS_TOP_N chevaux (6) avec la plus forte progression
     // de part de marché (Gagnant) sur les 15 dernières secondes ; un cheval qui
