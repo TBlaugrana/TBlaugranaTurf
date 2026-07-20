@@ -175,6 +175,7 @@ class Tracker:
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
+        self.valuebet_seen = {}   # num -> {"delta": ..., "speed": ..., "at": ...} une fois bigmove ET vitesse rapide vrais EN MEME TEMPS (marquage definitif, comme bigmove_seen)
         self.last_reprog = 0.0
         self.last_save = 0.0
 
@@ -196,6 +197,7 @@ class Tracker:
                 "ema_prob": self.ema_prob,
                 "ema_last_t": self.ema_last_t,
                 "bigmove_seen": self.bigmove_seen,
+                "valuebet_seen": self.valuebet_seen,
                 "saved_at": time.time(),
             }
             tmp_path = STATE_FILE + ".tmp"
@@ -238,6 +240,7 @@ class Tracker:
         self.ema_prob = snap.get("ema_prob") or {}
         self.ema_last_t = snap.get("ema_last_t") or {}
         self.bigmove_seen = snap.get("bigmove_seen") or {}
+        self.valuebet_seen = snap.get("valuebet_seen") or {}
         return self.selected_reunion is not None and self.selected_course is not None
 
     # -- programme -----------------------------------------------------
@@ -310,6 +313,7 @@ class Tracker:
         self.ema_prob = {}
         self.ema_last_t = {}
         self.bigmove_seen = {}
+        self.valuebet_seen = {}
         set_state(rows=[], snapLine="📸 Rapports probables : en attente")
 
     def refresh_programme_background(self):
@@ -518,8 +522,22 @@ class Tracker:
             bigmove = self.bigmove_seen.get(num)
             is_bigmove = bigmove is not None
 
+            # VALUEBET : marquage DEFINITIF, sur le meme principe que bigmove_seen.
+            # Des que 🔥 gros ecart (is_bigmove) ET ⚡ mouvement rapide (is_fast)
+            # sont vrais EN MEME TEMPS sur un cycle, le cheval reste marque
+            # "valuebet" pour le reste de la course — meme si sa vitesse
+            # retombe ensuite sous le seuil. Avant ce changement, le bandeau
+            # etait recalcule a chaque cycle cote client (isBigMove && isFast
+            # "live") et disparaissait des que isFast repassait a false ; il
+            # est maintenant fige cote serveur, source unique de verite.
+            if is_bigmove and is_fast:
+                prev_vb = self.valuebet_seen.get(num)
+                if prev_vb is None:
+                    self.valuebet_seen[num] = {"delta": delta15, "speed": spd, "at": now}
+            is_valuebet = num in self.valuebet_seen
+
             # tocard = cote Gagnant actuelle sous le seuil -> masque, meme si
-            # marque bigmove (sous 5% ca reste sans chance reelle)
+            # marque bigmove/valuebet (sous 5% ca reste sans chance reelle)
             is_longshot = cote_g is not None and cote_g < LONGSHOT_HIDE_THRESHOLD_PCT
 
             rows.append({
@@ -532,11 +550,13 @@ class Tracker:
                 "isFavori": bool(g and g.get("favoris")),
                 "isFast": is_fast,
                 "isBigMove": is_bigmove,
+                "isValuebet": is_valuebet,
                 "speed": spd,
-                # un cheval marque definitivement reste visible tant qu'il n'est
-                # plus dans le top des plus fortes progressions sur 15s, MAIS un
-                # tocard (sous le seuil) reste masque meme s'il est bigmove
-                "hidden": ((idx >= GAINERS_TOP_N) and not is_bigmove) or is_longshot,
+                # un cheval marque definitivement (bigmove OU valuebet) reste
+                # visible tant qu'il n'est plus dans le top des plus fortes
+                # progressions sur 15s, MAIS un tocard (sous le seuil) reste
+                # masque meme s'il est bigmove/valuebet
+                "hidden": ((idx >= GAINERS_TOP_N) and not is_bigmove and not is_valuebet) or is_longshot,
             })
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
