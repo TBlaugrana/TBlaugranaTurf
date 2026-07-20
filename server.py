@@ -48,7 +48,7 @@ SPEED_WINDOW_S = 45             # fenetre glissante pour calculer la vitesse de 
 SPEED_THRESHOLD_PCT_PER_MIN = 25 # seuil (variation RELATIVE, en %/min) au-dela duquel le badge eclair est affiche
 REPROG_INTERVAL_S = 45          # recharge le programme en tache de fond toutes les 45s
 DEPART_CHANGE_THRESHOLD_S = 15  # ecart d'heure de depart a partir duquel on considere un retard/avance
-RACE_STALE_S = 5 * 60           # bascule vers la course suivante 5 min apres son depart
+RACE_STALE_S = 6 * 60           # bascule vers la course suivante 6 min apres son depart
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
@@ -56,7 +56,7 @@ GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progre
 # cheval est considere comme un "tocard" sans chance reelle et masque du
 # tableau — y compris s'il est marque "bigmove" (une progression forte ne
 # suffit pas a le rendre interessant s'il reste sous ce niveau).
-LONGSHOT_HIDE_THRESHOLD_PCT = 5.0
+LONGSHOT_HIDE_THRESHOLD_PCT = 6.0
 
 # Lissage exponentiel (EMA) applique a la probabilite implicite (Gagnant) avant
 # tout calcul de delta/vitesse, pour filtrer le bruit tick-par-tick (la cote
