@@ -206,22 +206,13 @@
     display:grid;
     grid-template-columns: 1fr 52px;
     gap:8px;
-    align-items:end;
+    align-items:center;
     padding:0 12px 6px;
     font-size:10px;
     text-transform:uppercase;
     letter-spacing:.08em;
     color:var(--text-dim);
     font-weight:700;
-  }
-  .table-head .sub{
-    font-weight:500;
-    font-size:9px;
-    letter-spacing:.06em;
-    color:var(--text-dim);
-    opacity:.75;
-    display:block;
-    margin-top:1px;
   }
   .table-head span:last-child{ text-align:right; }
 
@@ -360,7 +351,7 @@
 
   <div class="table-wrap">
     <div class="table-head">
-      <span>Cheval <span class="sub">Δ15s · vitesse</span></span>
+      <span>Cheval</span>
       <span>Cité G</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
@@ -574,11 +565,9 @@ function applyState(data){
   toteLabelEl.textContent = data.toteLabel || '';
 
   if(data.snapLine){
-    snapLineEl.style.display = '';
     snapLineEl.textContent = data.snapLine;
-  } else {
-    snapLineEl.style.display = 'none';
   }
+  snapLineEl.style.display = 'none';
 
   if(data.statusLine){
     statusLineEl.textContent = data.statusLine;
