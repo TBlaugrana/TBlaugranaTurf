@@ -523,14 +523,16 @@ function renderTable(rows){
         : `Vitesse de variation relative : ${spd !== undefined ? (spd >= 0 ? '+' : '') + spd.toFixed(1) : '—'} %/min (probabilité implicite lissée, fenêtre ≤45s)`;
     }
 
-    // Signal "VALUEBET" : ne s'affiche QUE quand les deux critères sont
-    // vrais EN MÊME TEMPS sur le même cheval — 🔥 gros écart (Δ15s ≥ seuil,
-    // marqué à vie pour la course) ET ⚡ mouvement rapide (vitesse ≥ seuil,
-    // état du moment). Un seul des deux critères rempli ne déclenche plus
-    // aucune décoration ; le texte Δ15s/Vitesse reste simplement coloré.
+    // Signal "VALUEBET" : marquage DÉFINITIF calculé côté serveur (comme le
+    // 🔥 bigmove). Dès que 🔥 gros écart ET ⚡ mouvement rapide ont été vrais
+    // EN MÊME TEMPS au moins une fois sur la course, le cheval reste marqué
+    // "valuebet" pour le reste de la course — le bandeau ne disparaît plus
+    // quand la vitesse retombe ensuite sous le seuil. Le cheval reste aussi
+    // visible dans le tableau (masquage par rang ignoré côté serveur pour
+    // les chevaux bigmove/valuebet).
     const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
     const isBigMove = !!r.isBigMove;
-    const isValuebet = isBigMove && isFast;
+    const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
       const deltaTxt = delta120 !== undefined ? `${delta120 >= 0 ? '+' : ''}${delta120.toFixed(1)}%` : '—';
