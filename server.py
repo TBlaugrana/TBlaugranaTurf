@@ -82,7 +82,7 @@ SPEED_MIN_WINDOW_S = 10.0
 # est un signal au moins aussi fort qu'un favori qui passe de 40% a 42%
 # (+5% relatif). Le calcul en relatif remet les deux cas a la meme echelle.
 BIGMOVE_THRESHOLD_PCT = 15.0
-BIGMOVE_ALERT_LEAD_S = 120       # les alertes ne se declenchent que dans les 2 dernieres minutes avant le
+BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la derniere minute avant le
                                   # depart (avant, les mouvements sont frequents mais les enjeux sont faibles)
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
