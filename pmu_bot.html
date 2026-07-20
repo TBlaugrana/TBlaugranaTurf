@@ -291,6 +291,13 @@
     white-space:normal;
     line-height:1.15;
   }
+  .fav-rank{
+    font-style:italic;
+    font-weight:400;
+    font-size:11.5px;
+    color:var(--text-dim);
+    margin-left:5px;
+  }
   .late-badge{ flex:none; font-size:12px; margin-left:2px; }
   .row-late{ border-style:dashed; }
   .cote{
@@ -414,7 +421,7 @@ function buildRow(num){
     <div class="row-top">
       <div class="horse">
         <span class="num-badge"></span>
-        <span class="horse-name"></span>
+        <span class="horse-name"><span class="name-text"></span><span class="fav-rank"></span></span>
       </div>
       <div class="cote"></div>
     </div>
@@ -426,6 +433,11 @@ function buildRow(num){
   `;
   row.querySelector('.num-badge').textContent = num;
   return row;
+}
+
+function rangFavori(rang){
+  if(rang === 1) return '1er favori';
+  return `${rang}e favori`;
 }
 
 function renderTable(rows){
@@ -440,6 +452,16 @@ function renderTable(rows){
   for(const num in rowEls){
     prevRects[num] = rowEls[num].getBoundingClientRect();
   }
+
+  // Rang au favoritisme : classement de tous les partants par cote (probabilité
+  // implicite) décroissante, indépendant de l'ordre d'affichage des lignes
+  // (qui reste par numéro de cheval). Les chevaux sans cote disponible n'ont
+  // pas de rang.
+  const rangParNum = {};
+  rows
+    .filter(r => r.coteG !== null && r.coteG !== undefined)
+    .sort((a, b) => b.coteG - a.coteG)
+    .forEach((r, i) => { rangParNum[r.num] = i + 1; });
 
   rows.forEach(r=>{
     const num = r.num;
@@ -456,8 +478,13 @@ function renderTable(rows){
       rowEls[num] = row;
     }
 
-    const nameEl = row.querySelector('.horse-name');
-    if(nameEl.textContent !== nom) nameEl.textContent = nom;
+    const nameTextEl = row.querySelector('.name-text');
+    if(nameTextEl.textContent !== nom) nameTextEl.textContent = nom;
+
+    const rangEl = row.querySelector('.fav-rank');
+    const rang = rangParNum[num];
+    const rangStr = rang ? rangFavori(rang) : '';
+    if(rangEl.textContent !== rangStr) rangEl.textContent = rangStr;
 
     if(r.isFavori && !row.querySelector('.fav-badge')){
       const badge = document.createElement('span');
