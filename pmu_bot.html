@@ -310,7 +310,6 @@
     text-align:right;
     min-width:44px;
   }
-  .fav-badge{ flex:none; font-size:12px; margin-left:2px; color:var(--accent-2); transform:translateY(-2px); display:inline-block; }
 
   .row-bottom{
     display:flex;
@@ -485,17 +484,6 @@ function renderTable(rows){
     const rang = rangParNum[num];
     const rangStr = rang ? rangFavori(rang) : '';
     if(rangEl.textContent !== rangStr) rangEl.textContent = rangStr;
-
-    if(r.isFavori && !row.querySelector('.fav-badge')){
-      const badge = document.createElement('span');
-      badge.className = 'fav-badge';
-      badge.title = 'Favori des rapports probables';
-      badge.textContent = '★';
-      row.querySelector('.horse').appendChild(badge);
-    } else if(!r.isFavori){
-      const existing = row.querySelector('.fav-badge');
-      if(existing) existing.remove();
-    }
 
     const coteEl = row.querySelector('.cote');
     if(coteEl.textContent !== coteGStr){
