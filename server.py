@@ -88,6 +88,17 @@ BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la der
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
 
+# Si True, les reunions dont le pays n'est pas la France sont completement
+# ignorees des le chargement du programme (elles ne sont jamais candidates
+# a la selection automatique et n'apparaissent jamais dans l'etat renvoye
+# au bot). Mettre a False pour revenir au comportement d'origine (toutes
+# les reunions, France + etranger).
+HIDE_FOREIGN_RACES = True
+
+# Codes pays consideres comme "France" (l'API PMU utilise normalement "FRA").
+# Liste au cas ou un autre libelle serait renvoye pour certaines reunions.
+FRANCE_COUNTRY_CODES = {"FRA"}
+
 # ---------------------------------------------------------------------------
 # Persistance sur disque : permet de retrouver l'etat (course suivie,
 # historique des cotes...) si le process redemarre (crash, redeploiement,
@@ -154,6 +165,23 @@ def date_pmu(d):
 def is_annulee(obj):
     s = obj.get("statut") or obj.get("statutCourse") or obj.get("statutReunion") or ""
     return isinstance(s, str) and "ANNULE" in s.upper()
+
+
+def is_etrangere(reunion):
+    """True si la reunion se deroule dans un pays autre que la France.
+
+    L'API PMU expose normalement un champ "pays" sur chaque reunion, par ex.
+    {"code": "FRA", "libelleLong": "FRANCE"}. Si ce champ est absent ou dans
+    un format inattendu, on ne masque PAS la reunion par prudence (mieux vaut
+    afficher une course etrangere par erreur que de faire disparaitre des
+    reunions francaises a cause d'un format non reconnu)."""
+    pays = reunion.get("pays")
+    if not isinstance(pays, dict):
+        return False
+    code = (pays.get("code") or "").strip().upper()
+    if not code:
+        return False
+    return code not in FRANCE_COUNTRY_CODES
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +276,8 @@ class Tracker:
         courses = []
         for ru in (data.get("programme", {}).get("reunions") or []):
             if is_annulee(ru):
+                continue
+            if HIDE_FOREIGN_RACES and is_etrangere(ru):
                 continue
             hippo = ru.get("hippodrome") or {}
             hip = hippo.get("libelleCourt") or hippo.get("libelleLong") or f"R{ru.get('numOfficiel')}"
