@@ -503,7 +503,19 @@ class Tracker:
         # outsiders). Le delta est calcule sur la serie lissee (EMA) pour ne
         # pas reagir a du bruit tick-par-tick ; seule la cote affichee
         # ("coteG") reste la valeur brute instantanee du PMU.
+        # -- PASSE 1 : detection / mise a jour des records enregistres --------
+        # Le tableau n'affiche plus le mouvement instantane (qui change a
+        # chaque cycle de 0.5s) mais le PLUS GROS ECART ENREGISTRE pour
+        # chaque cheval pendant la derniere minute avant le depart
+        # (BIGMOVE_ALERT_LEAD_S). Cette valeur est FIGEE : elle ne bouge que
+        # si un mouvement encore plus grand est detecte pour ce cheval,
+        # jamais a chaque cycle. C'est elle (et non plus le delta15 live)
+        # qui sert de critere de classement.
         deltas = {}
+        in_alert_window = (
+            self.depart_ts is not None
+            and (self.depart_ts - now) <= BIGMOVE_ALERT_LEAD_S
+        )
         for num in self.favoris_order:
             g = gagnant_map.get(num)
             cote_g = g["ratio"] if g else None
@@ -514,56 +526,53 @@ class Tracker:
                 delta15 = (math.exp(math.log(ema_now) - math.log(ema_15)) - 1) * 100  # variation relative en %
             deltas[num] = (cote_g, ema_15, delta15)
 
-        def sort_key(n):
-            d = deltas[n][2]
-            return (d is None, -(d if d is not None else 0))
-
-        # Classement par plus forte progression de part de marche (Gagnant) sur
-        # les 15 dernieres secondes, decroissant ; seuls les GAINERS_TOP_N premiers
-        # restent visibles (les autres sont masques, pas supprimes, donc ils
-        # reapparaissent instantanement des qu'ils remontent dans le classement).
-        display_order = sorted(self.favoris_order, key=sort_key)
-
-        rows = []
-        for idx, num in enumerate(display_order):
-            g = gagnant_map.get(num)
-            cote_g, cote_g15, delta15 = deltas[num]
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PCT_PER_MIN
 
-            # Marquage DEFINITIF : des que la colonne "Δ 15s" (delta15, la
-            # variation RELATIVE sur les 15 dernieres secondes) atteint le
-            # seuil BIGMOVE_THRESHOLD_PCT (hausse de part de marche
-            # uniquement — les baisses ne sont plus signalees), le cheval
-            # reste marque pour le reste de la course. Sans ca, la ligne peut
-            # redescendre dans le classement / sortir du tableau au cycle
-            # suivant et le signal passe inaperçu.
-            # L'alerte ne se declenche que dans les BIGMOVE_ALERT_LEAD_S (2 min)
-            # avant le depart : avant ca, les mouvements sont frequents mais
-            # les enjeux sont trop faibles pour etre significatifs.
-            in_alert_window = (
-                self.depart_ts is not None
-                and (self.depart_ts - now) <= BIGMOVE_ALERT_LEAD_S
-            )
+            # Marquage DEFINITIF du record : des que la variation RELATIVE
+            # sur 15s (delta15, hausse de part de marche uniquement) atteint
+            # le seuil BIGMOVE_THRESHOLD_PCT PENDANT la derniere minute avant
+            # le depart, on enregistre {delta, vitesse a cet instant}. Un
+            # nouveau record n'ecrase l'ancien que s'il est PLUS GRAND : la
+            # valeur affichee ne peut donc que monter, jamais redescendre ni
+            # fluctuer d'un cycle a l'autre.
             if in_alert_window and delta15 is not None and delta15 >= BIGMOVE_THRESHOLD_PCT:
                 prev = self.bigmove_seen.get(num)
                 if prev is None or delta15 > prev["delta"]:
-                    self.bigmove_seen[num] = {"delta": delta15, "at": now}
+                    self.bigmove_seen[num] = {"delta": delta15, "speed": spd, "at": now}
+
             bigmove = self.bigmove_seen.get(num)
             is_bigmove = bigmove is not None
 
-            # VALUEBET : marquage DEFINITIF, sur le meme principe que bigmove_seen.
-            # Des que 🔥 gros ecart (is_bigmove) ET ⚡ mouvement rapide (is_fast)
-            # sont vrais EN MEME TEMPS sur un cycle, le cheval reste marque
-            # "valuebet" pour le reste de la course — meme si sa vitesse
-            # retombe ensuite sous le seuil. Avant ce changement, le bandeau
-            # etait recalcule a chaque cycle cote client (isBigMove && isFast
-            # "live") et disparaissait des que isFast repassait a false ; il
-            # est maintenant fige cote serveur, source unique de verite.
+            # VALUEBET : marquage DEFINITIF, sur le meme principe. Des que 🔥
+            # gros ecart (is_bigmove) ET ⚡ mouvement rapide (is_fast) sont
+            # vrais EN MEME TEMPS sur un cycle, le cheval reste marque
+            # "valuebet" pour le reste de la course.
             if is_bigmove and is_fast:
                 prev_vb = self.valuebet_seen.get(num)
                 if prev_vb is None:
                     self.valuebet_seen[num] = {"delta": delta15, "speed": spd, "at": now}
+
+        # -- PASSE 2 : classement par record enregistre (fige), decroissant --
+        # Seuls les chevaux ayant deja un record enregistre sont candidats au
+        # classement ; ceux qui n'en ont pas encore (avant l'ouverture de la
+        # fenetre d'1 minute, ou simplement pas encore de gros mouvement)
+        # passent en dernier et restent masques -> le tableau reste "en
+        # attente" jusqu'a ce qu'un premier ecart soit detecte.
+        def sort_key(n):
+            bm = self.bigmove_seen.get(n)
+            if bm is None:
+                return (True, 0.0)
+            return (False, -bm["delta"])
+
+        display_order = sorted(self.favoris_order, key=sort_key)
+
+        rows = []
+        for num in display_order:
+            g = gagnant_map.get(num)
+            cote_g, cote_g15, delta15 = deltas[num]
+            bigmove = self.bigmove_seen.get(num)
+            is_bigmove = bigmove is not None
             is_valuebet = num in self.valuebet_seen
 
             # tocard = cote Gagnant actuelle sous le seuil -> masque, meme si
@@ -573,20 +582,16 @@ class Tracker:
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
-                "coteG": cote_g,
-                "coteG15": cote_g15,
-                "delta15": delta15,
-                "delta120": bigmove["delta"] if bigmove else None,
+                "coteG": cote_g,                                    # cote actuelle, live (informatif)
+                "deltaRecord": bigmove["delta"] if bigmove else None,   # ecart FIGE, critere de classement
+                "speedRecord": bigmove["speed"] if bigmove else None,   # vitesse FIGEE au moment du record
+                "recordAt": bigmove["at"] if bigmove else None,         # timestamp du record (pour "il y a Xs")
                 "isFavori": bool(g and g.get("favoris")),
-                "isFast": is_fast,
                 "isBigMove": is_bigmove,
                 "isValuebet": is_valuebet,
-                "speed": spd,
-                # un cheval marque definitivement (bigmove OU valuebet) reste
-                # visible tant qu'il n'est plus dans le top des plus fortes
-                # progressions sur 15s, MAIS un tocard (sous le seuil) reste
-                # masque meme s'il est bigmove/valuebet
-                "hidden": ((idx >= GAINERS_TOP_N) and not is_bigmove and not is_valuebet) or is_longshot,
+                # seuls les chevaux avec un record enregistre (et pas des
+                # tocards) sont candidats a l'affichage dans le top 5
+                "hidden": (not is_bigmove) or is_longshot,
             })
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
