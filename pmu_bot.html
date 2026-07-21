@@ -23,6 +23,8 @@
     --danger-bg:#f6e6e2;
     --tote-bg:#14201a;
     --tote-fg:#e8b24d;
+    --silver:#c7ccd4;
+    --bronze:#c9955f;
     --radius:10px;
   }
   *{box-sizing:border-box;}
@@ -49,14 +51,6 @@
     text-transform:uppercase;
     color:var(--accent-2);
     font-weight:500;
-  }
-  h1{
-    font-family:'Fraunces',serif;
-    font-weight:600;
-    font-size:30px;
-    line-height:1.05;
-    margin:4px 0 2px;
-    color:var(--accent);
   }
   .subtitle{
     font-size:13px;
@@ -86,11 +80,6 @@
     padding:16px 18px;
   }
 
-  .btn-row-compact button{
-    font-size:13px;
-    padding:9px 10px;
-  }
-
   .field{ margin-bottom:12px; }
   .field:last-child{ margin-bottom:0; }
   label{
@@ -102,19 +91,6 @@
     margin-bottom:5px;
     font-weight:600;
   }
-  select{
-    width:100%;
-    appearance:none;
-    -webkit-appearance:none;
-    background:var(--surface) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%237d7460" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>') no-repeat right 14px center;
-    border:1px solid var(--border);
-    border-radius:10px;
-    padding:12px 38px 12px 14px;
-    font-family:'Inter',sans-serif;
-    font-size:16px;
-    color:var(--text);
-  }
-  select:focus{ outline:2px solid var(--accent); outline-offset:1px; }
   .course-info{
     width:100%;
     background:var(--surface);
@@ -125,44 +101,6 @@
     font-size:16px;
     font-weight:600;
     color:var(--text);
-  }
-  select optgroup{
-    font-family:'Inter',sans-serif;
-    font-weight:700;
-    font-style:normal;
-    color:var(--accent);
-    background:var(--surface);
-  }
-  select option.opt-past{
-    color:var(--text-dim);
-  }
-
-  .btn-row{ display:flex; gap:10px; margin-top:14px; }
-  button{
-    flex:1;
-    border:1px solid var(--border);
-    background:var(--surface);
-    color:var(--text);
-    font-family:'Inter',sans-serif;
-    font-weight:600;
-    font-size:15px;
-    padding:13px 12px;
-    border-radius:10px;
-    cursor:pointer;
-    transition:background .15s ease, transform .1s ease;
-  }
-  button:hover{ background:var(--surface-alt); }
-  button:active{ transform:scale(.98); }
-  button.primary{
-    background:var(--accent);
-    border-color:var(--accent);
-    color:#fdf8ec;
-  }
-  button.primary:hover{ background:#163225; }
-  button:disabled{
-    opacity:.5;
-    cursor:not-allowed;
-    transform:none;
   }
 
   .tote{
@@ -201,51 +139,60 @@
     margin-top:2px;
   }
 
-  .table-wrap{ flex:1; }
-  .table-head{
-    display:grid;
-    grid-template-columns: 1fr 52px;
-    gap:8px;
-    align-items:center;
-    padding:0 12px 6px;
-    font-size:10px;
-    text-transform:uppercase;
-    letter-spacing:.08em;
-    color:var(--text-dim);
-    font-weight:700;
+  /* ---------------------------------------------------------------------
+     Classement Top 5 : contrairement a l'ancien tableau (qui reordonnait
+     physiquement toutes les lignes a chaque cycle, donnant une impression
+     de chaos visuel), ici il y a EXACTEMENT 5 emplacements fixes (1 a 5).
+     Seul le CONTENU d'un emplacement change quand un cheval en sort ou y
+     entre (fondu), la position #1/#2/.../#5 elle-meme ne bouge jamais a
+     l'ecran.
+     --------------------------------------------------------------------- */
+  .board-head{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    padding:2px 4px 4px;
   }
-  .table-head span:last-child{ text-align:right; }
+  .board-head .eyebrow{ margin:0; }
+  .board-head .board-sub{
+    font-size:10.5px;
+    color:var(--text-dim);
+    font-family:'JetBrains Mono',monospace;
+  }
 
-  #rows{
+  #board{
     display:flex;
     flex-direction:column;
-    gap:6px;
-    position:relative;
+    gap:8px;
   }
-  .row{
+  .slot{
     position:relative;
     background:var(--surface);
     border:1px solid var(--border);
-    border-radius:9px;
-    padding:9px 12px;
-    box-sizing:border-box;
-    transition: transform .35s ease, background-color .4s ease;
+    border-radius:11px;
+    padding:10px 13px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    min-height:56px;
+    transition: background-color .4s ease, border-color .3s ease;
   }
-  .row.row-hidden{ display:none; }
-  .row.flash-up{ background:var(--success-bg); }
-  .row.flash-down{ background:var(--danger-bg); }
+  .slot.slot-empty{
+    justify-content:center;
+    color:var(--text-dim);
+    font-size:12.5px;
+  }
+  .slot.flash-up{ background:var(--success-bg); }
+  .slot.flash-down{ background:var(--danger-bg); }
 
-  /* Un seul signal visuel fort, réservé au cas où 🔥 gros écart ET
-     ⚡ mouvement rapide sont vrais EN MÊME TEMPS sur le même cheval.
-     Rien n'est affiché si un seul des deux critères est rempli. */
-  .row.row-valuebet{
+  .slot.slot-valuebet{
     border:2px solid var(--tote-fg);
     background:linear-gradient(0deg, rgba(232,178,77,.12), rgba(232,178,77,.12)), var(--surface);
     box-shadow:0 0 0 3px rgba(232,178,77,.16);
   }
   .valuebet-tag{
     position:absolute;
-    top:-10px; left:10px;
+    top:-10px; left:44px;
     background:var(--tote-bg);
     color:var(--tote-fg);
     font-family:'JetBrains Mono',monospace;
@@ -257,9 +204,30 @@
     border-radius:20px;
     display:none;
   }
-  .row.row-valuebet .valuebet-tag{ display:inline-block; }
+  .slot.slot-valuebet .valuebet-tag{ display:inline-block; }
 
-  .row-top{
+  .slot-rank{
+    flex:none;
+    width:34px; height:34px;
+    border-radius:50%;
+    background:var(--surface-alt);
+    border:2px solid var(--border);
+    color:var(--accent);
+    font-family:'Fraunces',serif;
+    font-weight:600;
+    font-size:16px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .slot-rank.rank-1{ background:var(--tote-fg); border-color:var(--tote-fg); color:var(--tote-bg); }
+  .slot-rank.rank-2{ background:var(--silver); border-color:#adb3bd; color:#2b2f36; }
+  .slot-rank.rank-3{ background:var(--bronze); border-color:#a9743f; color:#3d2510; }
+
+  .slot-body{ flex:1; min-width:0; transition:opacity .25s ease; }
+  .slot-body.swap{ opacity:0; }
+
+  .slot-top{
     display:flex;
     align-items:center;
     gap:9px;
@@ -273,19 +241,19 @@
   }
   .num-badge{
     flex:none;
-    width:27px; height:27px;
+    width:24px; height:24px;
     border-radius:50%;
     background:var(--accent);
     color:#fdf8ec;
     font-family:'JetBrains Mono',monospace;
-    font-size:13px;
+    font-size:12px;
     font-weight:700;
     display:flex; align-items:center; justify-content:center;
   }
   .horse-name{
     flex:1;
     min-width:0;
-    font-size:15.5px;
+    font-size:15px;
     font-weight:600;
     color:var(--text);
     white-space:normal;
@@ -294,12 +262,10 @@
   .fav-rank{
     font-style:italic;
     font-weight:400;
-    font-size:11.5px;
+    font-size:11px;
     color:var(--text-dim);
     margin-left:5px;
   }
-  .late-badge{ flex:none; font-size:12px; margin-left:2px; }
-  .row-late{ border-style:dashed; }
   .cote{
     flex:none;
     font-family:'JetBrains Mono',monospace;
@@ -311,7 +277,7 @@
     min-width:44px;
   }
 
-  .row-bottom{
+  .slot-bottom{
     display:flex;
     align-items:center;
     gap:10px;
@@ -327,12 +293,12 @@
   .var.down, .vitesse.down{ color:var(--danger); }
   .var.flat, .vitesse.flat{ color:var(--text-dim); }
   .stat-dot{ width:3px; height:3px; border-radius:50%; background:var(--border); }
-
-  .empty{
-    text-align:center;
+  .record-age{
+    margin-left:auto;
+    font-size:9.5px;
     color:var(--text-dim);
-    font-size:13px;
-    padding:30px 10px;
+    opacity:.75;
+    font-style:italic;
   }
 </style>
 </head>
@@ -355,39 +321,45 @@
   <div class="snap-line" id="snapLine" style="display:none;">📸 Snapshot : en attente</div>
   <div class="status-line" id="statusLine"></div>
 
-  <div class="table-wrap">
-    <div class="table-head">
-      <span>Cheval</span>
-      <span>Cité G</span>
-    </div>
-    <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
+  <div class="board-head">
+    <span class="eyebrow">Top 5 · plus gros écarts enregistrés</span>
+    <span class="board-sub">figé jusqu'au départ, sauf nouveau record</span>
   </div>
+  <div id="board"></div>
 
 </div>
 
 <script>
 // -----------------------------------------------------------------------
 // Client "léger" : tout le suivi (programme, cotes, historique, vitesse,
-// top 5) est calculé côté serveur (server.py), en continu, indépendamment
-// du fait qu'un onglet soit ouvert ou non. Cette page se contente d'interroger
-// périodiquement /api/state et d'afficher ce que le serveur renvoie.
-// -> Fermer l'onglet ne fait donc plus perdre aucune donnée : au retour,
-//    le serveur renvoie l'état à jour (course en cours, cotes, historique).
+// classement) est calculé côté serveur (server.py), en continu,
+// indépendamment du fait qu'un onglet soit ouvert ou non. Cette page se
+// contente d'interroger périodiquement /api/state et d'afficher ce que le
+// serveur renvoie.
+//
+// Le serveur renvoie deja "rows" TRIE par classement (plus forte
+// progression de part de marche sur 15s), avec un flag "hidden" qui
+// masque les tocards (cote < seuil) et tout ce qui sort du top N interne.
+// Ici, on se contente de prendre les 5 premieres lignes NON masquees de
+// cette liste deja triee, et de les afficher dans 5 emplacements FIXES
+// (#1 a #5) : contrairement a l'ancien affichage, les emplacements ne se
+// deplacent jamais a l'ecran, seul leur contenu change (avec un fondu)
+// quand un cheval entre ou sort du top 5.
 // -----------------------------------------------------------------------
 const POLL_INTERVAL_MS = 700;   // rythme de rafraîchissement de l'affichage (le serveur, lui, interroge PMU toutes les 500ms)
 const FETCH_TIMEOUT_MS = 5000;
+const TOP_N = 5;
 
 const courseInfoEl = document.getElementById('courseInfo');
 const countdownEl = document.getElementById('countdown');
 const snapLineEl = document.getElementById('snapLine');
 const statusLineEl = document.getElementById('statusLine');
 const toteLabelEl = document.getElementById('toteLabel');
-const rowsEl = document.getElementById('rows');
+const boardEl = document.getElementById('board');
 
-let rowEls = {};        // num -> élément DOM de la ligne (réutilisé d'un cycle à l'autre)
+let slotEls = [];       // 5 emplacements DOM fixes (rang -> element)
 let lastGagnant = {};   // num -> dernière cote Gagnant affichée (pour détecter les variations et flasher)
 let departTs = null;
-let pollTimer = null;
 
 function fmtCountdown(secs){
   if(secs >= 0){
@@ -409,29 +381,46 @@ function tickCountdown(){
     const secs = Math.floor(departTs - (Date.now()/1000));
     countdownEl.textContent = fmtCountdown(secs);
   }
+  // Rafraîchit uniquement le texte "figé il y a Xs" de chaque emplacement,
+  // sans jamais toucher aux chiffres (Δ record / vitesse record) eux-mêmes.
+  slotEls.forEach(slot=>{
+    const ageEl = slot.querySelector('.record-age');
+    if(!ageEl || !slot.dataset.recordAt) return;
+    ageEl.textContent = fmtAge((Date.now()/1000) - Number(slot.dataset.recordAt));
+  });
 }
 
-function buildRow(num){
-  const row = document.createElement('div');
-  row.className = 'row';
-  row.dataset.num = num;
-  row.innerHTML = `
+function buildSlot(rank){
+  const slot = document.createElement('div');
+  slot.className = 'slot';
+  slot.dataset.rank = String(rank);
+  slot.innerHTML = `
     <span class="valuebet-tag">🔥⚡ VALUEBET ⚡ 🔥</span>
-    <div class="row-top">
-      <div class="horse">
-        <span class="num-badge"></span>
-        <span class="horse-name"><span class="name-text"></span><span class="fav-rank"></span></span>
+    <div class="slot-rank rank-${rank}">${rank}</div>
+    <div class="slot-body">
+      <div class="slot-top">
+        <div class="horse">
+          <span class="num-badge"></span>
+          <span class="horse-name"><span class="name-text"></span><span class="fav-rank"></span></span>
+        </div>
+        <div class="cote"></div>
       </div>
-      <div class="cote"></div>
-    </div>
-    <div class="row-bottom">
-      <span class="stat"><span class="lbl">Δ</span><span class="var flat">—</span></span>
-      <span class="stat-dot"></span>
-      <span class="stat"><span class="lbl">Vit.</span><span class="vitesse flat">—</span></span>
+      <div class="slot-bottom">
+        <span class="stat"><span class="lbl">Δ 15s</span><span class="var flat">—</span></span>
+        <span class="stat-dot"></span>
+        <span class="stat"><span class="lbl">Vit.</span><span class="vitesse flat">—</span></span>
+      </div>
     </div>
   `;
-  row.querySelector('.num-badge').textContent = num;
-  return row;
+  boardEl.appendChild(slot);
+  return slot;
+}
+
+function ensureSlots(){
+  if(slotEls.length) return;
+  for(let rank = 1; rank <= TOP_N; rank++){
+    slotEls.push(buildSlot(rank));
+  }
 }
 
 function rangFavori(rang){
@@ -439,141 +428,168 @@ function rangFavori(rang){
   return `${rang}e favori`;
 }
 
-function renderTable(rows){
-  const emptyMsg = rowsEl.querySelector('.empty');
-  if(!rows || rows.length === 0){
-    if(!emptyMsg) rowsEl.innerHTML = '<div class="empty">Aucun cheval avec une cote disponible pour le moment.</div>';
-    return;
+function setSlotEmpty(slot){
+  slot.classList.add('slot-empty');
+  slot.classList.remove('slot-valuebet','flash-up','flash-down');
+  slot.dataset.num = '';
+  delete slot.dataset.recordAt;
+  const body = slot.querySelector('.slot-body');
+  if(body && !slot.querySelector('.empty-txt')){
+    body.innerHTML = '<span class="empty-txt">En attente d\'un cheval…</span>';
   }
-  if(emptyMsg) emptyMsg.remove();
+}
 
-  const prevRects = {};
-  for(const num in rowEls){
-    prevRects[num] = rowEls[num].getBoundingClientRect();
+function fmtAge(secs){
+  if(secs === undefined || secs === null || secs < 0) return '';
+  if(secs < 60) return `figé il y a ${Math.floor(secs)}s`;
+  const m = Math.floor(secs/60);
+  return `figé il y a ${m}min`;
+}
+
+function fillSlot(slot, r){
+  if(slot.classList.contains('slot-empty') || slot.querySelector('.empty-txt')){
+    // reconstruit le contenu normal si l'emplacement etait vide juste avant
+    slot.querySelector('.slot-body').innerHTML = `
+      <div class="slot-top">
+        <div class="horse">
+          <span class="num-badge"></span>
+          <span class="horse-name"><span class="name-text"></span><span class="fav-rank"></span></span>
+        </div>
+        <div class="cote"></div>
+      </div>
+      <div class="slot-bottom">
+        <span class="stat"><span class="lbl">Δ record</span><span class="var flat">—</span></span>
+        <span class="stat-dot"></span>
+        <span class="stat"><span class="lbl">Vit. record</span><span class="vitesse flat">—</span></span>
+        <span class="record-age"></span>
+      </div>
+    `;
+  }
+  slot.classList.remove('slot-empty');
+
+  const num = r.num;
+  const nom = r.nom || `#${num}`;
+  // cote actuelle : reste live (purement informatif, ne pilote pas le classement)
+  const coteG = (r.coteG === null || r.coteG === undefined) ? undefined : r.coteG;
+  const coteGStr = coteG !== undefined ? `${coteG.toFixed(1)}%` : "—";
+
+  // Δ et vitesse : valeurs ENREGISTRÉES (le plus gros écart détecté pendant
+  // la dernière minute avant le départ). Elles ne changent QUE si un
+  // mouvement encore plus grand est détecté pour ce cheval — jamais à
+  // chaque cycle. C'est ce qui détermine le classement (positions 1 à 5).
+  const deltaRecord = (r.deltaRecord === null || r.deltaRecord === undefined) ? undefined : r.deltaRecord;
+  const speedRecord = (r.speedRecord === null || r.speedRecord === undefined) ? undefined : r.speedRecord;
+  const deltaRecordStr = deltaRecord !== undefined ? `+${deltaRecord.toFixed(1)}%` : "—";
+  const speedRecordStr = speedRecord !== undefined ? `${speedRecord >= 0 ? '+' : ''}${speedRecord.toFixed(1)}%/min` : "—";
+
+  const changedHorse = slot.dataset.num !== num;
+  slot.dataset.num = num;
+
+  slot.querySelector('.num-badge').textContent = num;
+
+  const nameTextEl = slot.querySelector('.name-text');
+  if(nameTextEl.textContent !== nom) nameTextEl.textContent = nom;
+
+  const rangEl = slot.querySelector('.fav-rank');
+  const rangStr = r.rangFavori ? rangFavori(r.rangFavori) : '';
+  if(rangEl.textContent !== rangStr) rangEl.textContent = rangStr;
+
+  // La cote actuelle reste live : elle peut continuer a flasher vert/rouge,
+  // c'est une info secondaire, elle ne change pas le classement ni le Δ record.
+  const coteEl = slot.querySelector('.cote');
+  if(coteEl.textContent !== coteGStr){
+    coteEl.textContent = coteGStr;
+    const prevC = lastGagnant[num];
+    if(!changedHorse && prevC !== undefined && coteG !== undefined && coteG !== prevC){
+      slot.classList.remove('flash-up','flash-down');
+      void slot.offsetWidth;
+      slot.classList.add(coteG < prevC ? 'flash-up' : 'flash-down');
+      clearTimeout(slot._flashTimer);
+      slot._flashTimer = setTimeout(()=>slot.classList.remove('flash-up','flash-down'), 500);
+    }
+  }
+  if(coteG !== undefined) lastGagnant[num] = coteG;
+
+  // Δ record : figé, ne bouge que si un nouveau record est detecte pour ce cheval
+  const deltaEl = slot.querySelector('.var');
+  if(deltaEl.textContent !== deltaRecordStr) deltaEl.textContent = deltaRecordStr;
+  deltaEl.classList.remove('up','down','flat');
+  deltaEl.classList.add(deltaRecord !== undefined ? 'up' : 'flat');
+  deltaEl.title = `Plus gros écart de cote détecté pendant la dernière minute avant le départ (figé, critère de classement)`;
+
+  // Vitesse record : figee elle aussi (vitesse au moment ou le record a ete detecte)
+  const vitesseEl = slot.querySelector('.vitesse');
+  if(vitesseEl.textContent !== speedRecordStr) vitesseEl.textContent = speedRecordStr;
+  vitesseEl.classList.remove('up','down','flat');
+  if(speedRecord === undefined) vitesseEl.classList.add('flat');
+  else if(speedRecord > 0) vitesseEl.classList.add('up');
+  else if(speedRecord < 0) vitesseEl.classList.add('down');
+  else vitesseEl.classList.add('flat');
+  vitesseEl.title = `Vitesse enregistrée au moment du plus gros écart détecté (figée, ne change plus jusqu'au prochain record)`;
+
+  // Petit indicateur "figé il y a Xs", recalcule a chaque cycle a partir du
+  // timestamp du record — seul CE texte bouge en continu, jamais le chiffre.
+  const ageEl = slot.querySelector('.record-age');
+  const recordAt = (r.recordAt === null || r.recordAt === undefined) ? undefined : r.recordAt;
+  if(recordAt !== undefined){
+    slot.dataset.recordAt = String(recordAt);
+  } else {
+    delete slot.dataset.recordAt;
+  }
+  if(ageEl){
+    ageEl.textContent = recordAt !== undefined ? fmtAge((Date.now()/1000) - recordAt) : '';
   }
 
-  // Rang au favoritisme : classement de tous les partants par cote (probabilité
-  // implicite) décroissante, indépendant de l'ordre d'affichage des lignes
-  // (qui reste par numéro de cheval). Les chevaux sans cote disponible n'ont
-  // pas de rang.
+  const isValuebet = !!r.isValuebet;
+  const valuebetEl = slot.querySelector('.valuebet-tag');
+  if(valuebetEl && isValuebet){
+    valuebetEl.title = `Gros écart (${deltaRecordStr}) + mouvement rapide (${speedRecordStr}) détectés en même temps`;
+  }
+  slot.classList.toggle('slot-valuebet', isValuebet);
+
+  // Si le cheval de cet emplacement a change (un autre a pris sa place dans
+  // le classement), petit fondu du contenu pour signaler le changement sans
+  // deplacer physiquement l'emplacement a l'ecran.
+  if(changedHorse){
+    const body = slot.querySelector('.slot-body');
+    body.classList.add('swap');
+    requestAnimationFrame(()=>{ body.classList.remove('swap'); });
+  }
+}
+
+function renderBoard(rows){
+  ensureSlots();
+
+  const list = (rows || []);
+
+  // Rang au favoritisme : classement de tous les partants par cote
+  // (probabilité implicite) décroissante, utilisé uniquement pour l'info
+  // "1er favori / 2e favori..." affichée sous le nom.
   const rangParNum = {};
-  rows
+  list
     .filter(r => r.coteG !== null && r.coteG !== undefined)
     .sort((a, b) => b.coteG - a.coteG)
     .forEach((r, i) => { rangParNum[r.num] = i + 1; });
 
-  rows.forEach(r=>{
-    const num = r.num;
-    const nom = r.nom || `#${num}`;
-    const coteG = (r.coteG === null || r.coteG === undefined) ? undefined : r.coteG;
-    const delta15 = (r.delta15 === null || r.delta15 === undefined) ? undefined : r.delta15;
+  // Le serveur renvoie deja "rows" trie par classement (plus forte
+  // progression de part de marche) avec un flag "hidden" pour les tocards
+  // et le surplus au-dela de son propre top interne. On prend simplement
+  // les 5 premieres lignes NON masquees : ce sont "les 5 valeurs les plus
+  // hautes" du classement genere en arriere-plan.
+  const top5 = list
+    .filter(r => !r.hidden)
+    .slice(0, TOP_N)
+    .map(r => ({ ...r, rangFavori: rangParNum[r.num] }));
 
-    const coteGStr = coteG !== undefined ? `${coteG.toFixed(1)}%` : "—";
-    const delta15Str = delta15 !== undefined ? `${delta15 >= 0 ? '+' : ''}${delta15.toFixed(1)}%` : "—";
-
-    let row = rowEls[num];
-    if(!row){
-      row = buildRow(num);
-      rowEls[num] = row;
-    }
-
-    const nameTextEl = row.querySelector('.name-text');
-    if(nameTextEl.textContent !== nom) nameTextEl.textContent = nom;
-
-    const rangEl = row.querySelector('.fav-rank');
-    const rang = rangParNum[num];
-    const rangStr = rang ? rangFavori(rang) : '';
-    if(rangEl.textContent !== rangStr) rangEl.textContent = rangStr;
-
-    const coteEl = row.querySelector('.cote');
-    if(coteEl.textContent !== coteGStr){
-      coteEl.textContent = coteGStr;
-      const prevC = lastGagnant[num];
-      if(prevC !== undefined && coteG !== undefined && coteG !== prevC){
-        row.classList.remove('flash-up','flash-down');
-        void row.offsetWidth;
-        row.classList.add(coteG < prevC ? 'flash-up' : 'flash-down');
-        clearTimeout(row._flashTimer);
-        row._flashTimer = setTimeout(()=>row.classList.remove('flash-up','flash-down'), 500);
-      }
-    }
-    if(coteG !== undefined) lastGagnant[num] = coteG;
-
-    const deltaEl = row.querySelector('.var');
-    if(deltaEl.textContent !== delta15Str) deltaEl.textContent = delta15Str;
-    deltaEl.classList.remove('up','down','flat');
-    if(delta15 === undefined) deltaEl.classList.add('flat');
-    else if(delta15 > 0) deltaEl.classList.add('up');
-    else if(delta15 < 0) deltaEl.classList.add('down');
-    else deltaEl.classList.add('flat');
-
-    const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
-    const isFast = !!r.isFast;
-    const vitesseEl = row.querySelector('.vitesse');
-    if(vitesseEl){
-      const vitesseStr = spd !== undefined ? `${spd >= 0 ? '+' : ''}${spd.toFixed(1)}%` : "—";
-      if(vitesseEl.textContent !== vitesseStr) vitesseEl.textContent = vitesseStr;
-      vitesseEl.classList.remove('up','down','flat');
-      if(spd === undefined) vitesseEl.classList.add('flat');
-      else if(spd > 0) vitesseEl.classList.add('up');
-      else if(spd < 0) vitesseEl.classList.add('down');
-      else vitesseEl.classList.add('flat');
-      vitesseEl.title = isFast
-        ? `⚡ Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} %/min (variation relative de la probabilité implicite lissée, fenêtre ≤45s)`
-        : `Vitesse de variation relative : ${spd !== undefined ? (spd >= 0 ? '+' : '') + spd.toFixed(1) : '—'} %/min (probabilité implicite lissée, fenêtre ≤45s)`;
-    }
-
-    // Signal "VALUEBET" : marquage DÉFINITIF calculé côté serveur (comme le
-    // 🔥 bigmove). Dès que 🔥 gros écart ET ⚡ mouvement rapide ont été vrais
-    // EN MÊME TEMPS au moins une fois sur la course, le cheval reste marqué
-    // "valuebet" pour le reste de la course — le bandeau ne disparaît plus
-    // quand la vitesse retombe ensuite sous le seuil. Le cheval reste aussi
-    // visible dans le tableau (masquage par rang ignoré côté serveur pour
-    // les chevaux bigmove/valuebet).
-    const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
-    const isBigMove = !!r.isBigMove;
-    const isValuebet = !!r.isValuebet;
-    const valuebetEl = row.querySelector('.valuebet-tag');
-    if(valuebetEl && isValuebet){
-      const deltaTxt = delta120 !== undefined ? `${delta120 >= 0 ? '+' : ''}${delta120.toFixed(1)}%` : '—';
-      const spdTxt = spd !== undefined ? `${spd >= 0 ? '+' : ''}${spd.toFixed(1)}%/min` : '—';
-      valuebetEl.title = `Gros écart (${deltaTxt}) + mouvement rapide (${spdTxt}) en même temps`;
-    }
-    row.classList.toggle('row-valuebet', isValuebet);
-
-    // ne montre que les GAINERS_TOP_N chevaux (6) avec la plus forte progression
-    // de part de marché (Gagnant) sur les 15 dernières secondes ; un cheval qui
-    // sort du classement est simplement masqué (pas supprimé) donc il réapparaît
-    // instantanément dès qu'il y revient — calcul fait côté serveur, en continu
-    row.classList.toggle('row-hidden', !!r.hidden);
-
-    rowsEl.appendChild(row);
-  });
-
-  const presentNums = new Set(rows.map(r=>r.num));
-  for(const num in rowEls){
-    if(!presentNums.has(num)){
-      rowEls[num].remove();
-      delete rowEls[num];
+  for(let i = 0; i < TOP_N; i++){
+    const slot = slotEls[i];
+    const r = top5[i];
+    if(!r){
+      setSlotEmpty(slot);
+    } else {
+      fillSlot(slot, r);
     }
   }
-
-
-  rowsEl.querySelectorAll('.row:not(.row-hidden)').forEach(el=>{
-    const prev = prevRects[el.dataset.num];
-    if(prev){
-      const next = el.getBoundingClientRect();
-      const dy = prev.top - next.top;
-      if(dy !== 0){
-        el.style.transition = "none";
-        el.style.transform = `translateY(${dy}px)`;
-        requestAnimationFrame(()=>{
-          el.style.transition = "transform .35s ease, background-color .4s ease";
-          el.style.transform = "translateY(0)";
-        });
-      }
-    }
-  });
 }
 
 function applyState(data){
@@ -593,7 +609,7 @@ function applyState(data){
     statusLineEl.textContent = '';
   }
 
-  renderTable(data.rows);
+  renderBoard(data.rows);
 }
 
 async function pollState(){
@@ -611,7 +627,7 @@ async function pollState(){
     }
   }finally{
     clearTimeout(killer);
-    pollTimer = setTimeout(pollState, POLL_INTERVAL_MS);
+    setTimeout(pollState, POLL_INTERVAL_MS);
   }
 }
 
