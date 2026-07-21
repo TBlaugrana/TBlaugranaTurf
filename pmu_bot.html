@@ -170,10 +170,9 @@
     background:var(--surface);
     border:1px solid var(--border);
     border-radius:11px;
-    padding:10px 13px;
+    padding:10px 13px 10px 30px;
     display:flex;
     align-items:center;
-    gap:9px;
     min-height:56px;
     transition: background-color .4s ease, border-color .3s ease;
   }
@@ -181,20 +180,24 @@
     justify-content:center;
     color:var(--text-dim);
     font-size:12.5px;
+    padding-left:13px;
   }
   .slot.flash-up{ background:var(--success-bg); }
   .slot.flash-down{ background:var(--danger-bg); }
 
   .slot-rank{
+    position:absolute;
+    top:6px;
+    left:6px;
     flex:none;
-    width:24px; height:24px;
+    width:18px; height:18px;
     border-radius:50%;
     background:var(--surface-alt);
-    border:1.5px solid var(--border);
+    border:1px solid var(--border);
     color:var(--accent);
     font-family:'Fraunces',serif;
     font-weight:600;
-    font-size:12px;
+    font-size:10px;
     display:flex;
     align-items:center;
     justify-content:center;
@@ -380,10 +383,9 @@ function buildSlot(rank){
         <div class="cote"></div>
       </div>
       <div class="slot-bottom">
-        <span class="stat"><span class="lbl">Δ record</span><span class="var flat">—</span></span>
+        <span class="stat"><span class="lbl">Δ</span><span class="var flat">—</span></span>
         <span class="stat-dot"></span>
-        <span class="stat"><span class="lbl">Vit. record</span><span class="vitesse flat">—</span></span>
-        <span class="record-age"></span>
+        <span class="stat"><span class="lbl">Vit.</span><span class="vitesse flat">—</span></span>
       </div>
     </div>
   `;
@@ -433,10 +435,9 @@ function fillSlot(slot, r){
         <div class="cote"></div>
       </div>
       <div class="slot-bottom">
-        <span class="stat"><span class="lbl">Δ record</span><span class="var flat">—</span></span>
+        <span class="stat"><span class="lbl">Δ</span><span class="var flat">—</span></span>
         <span class="stat-dot"></span>
-        <span class="stat"><span class="lbl">Vit. record</span><span class="vitesse flat">—</span></span>
-        <span class="record-age"></span>
+        <span class="stat"><span class="lbl">Vit.</span><span class="vitesse flat">—</span></span>
       </div>
     `;
   }
