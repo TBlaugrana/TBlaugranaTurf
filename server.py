@@ -88,7 +88,7 @@ SPEED_MIN_WINDOW_S = 10.0
 # T0) et la cote live (colonne 3) au-dela duquel le signal VALUEBET se
 # declenche. Marquage DEFINITIF : une fois franchi, le cheval reste marque
 # "valuebet" pour le reste de la course.
-VALUEBET_THRESHOLD_PCT = 30.0
+VALUEBET_THRESHOLD_PCT = 15.0
 
 # Petite tolerance flottante pour eviter qu'un ecart calcule a exactement 30.0%
 # (mais legerement en-dessous a cause d'arrondis binaires, ex: 29.999999999997)
@@ -141,6 +141,7 @@ STATE = {
     "departTs": None,
     "rows": [],
     "tableMsg": "",
+    "liveOddsSorted": [],
     "updatedAt": None,
 }
 
@@ -531,6 +532,21 @@ class Tracker:
         now = time.time()
         self.update_speed_history(gagnant_map)  # alimente l'historique (EMA), conserve pour un usage futur eventuel
 
+        # -- cotes live triees par ordre croissant (informatif) ---------------
+        # Affichees cote client UNIQUEMENT avant que la reference T0 ne soit
+        # figee (avant le "snapshot a 0 secondes"), a titre purement
+        # informatif : aucun calcul d'ecart/valuebet ici, juste le classement
+        # brut des cotes Gagnant du moment, du favori (cote la plus basse) au
+        # plus outsider.
+        live_odds_sorted = sorted(
+            (
+                {"num": n, "nom": self.horse_names.get(n, f"#{n}"), "coteLive": info["ratio"]}
+                for n, info in gagnant_map.items()
+                if info.get("ratio") is not None
+            ),
+            key=lambda r: r["coteLive"],
+        )
+
         # -- capture de la cote de reference (colonne "Cote T0") --------------
         # Des qu'on entre dans la fenetre REF_LEAD_S (0 = au depart, T0) avant
         # le depart, on fige la cote actuelle de chaque cheval comme
@@ -587,7 +603,14 @@ class Tracker:
             # si le cheval reste marque "was_valuebet" en interne.
             is_valuebet = was_valuebet and ecart_pct > 0
             out_of_range = live < LIVE_COTE_MIN or live > LIVE_COTE_MAX
-            hidden = out_of_range and not was_valuebet
+            # ecart_pct < 0 => cote qui remonte depuis la reference (cheval
+            # delaisse), affiche avec un "+" cote client ("ecart positif" au
+            # sens de l'affichage). Ces chevaux n'ont aucun interet pour la
+            # chasse au valuebet : on les masque, comme ceux hors plage de
+            # cotes. Un cheval deja marque VALUEBET reste neanmoins toujours
+            # affiche, quoi qu'il arrive.
+            ecart_affiche_positif = ecart_pct < 0
+            hidden = (out_of_range or ecart_affiche_positif) and not was_valuebet
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
@@ -613,6 +636,7 @@ class Tracker:
         set_state(
             rows=rows,
             tableMsg=table_msg,
+            liveOddsSorted=live_odds_sorted,
             snapLine=f"📡 Rapports probables mis a jour — {now_str}",
             toteLabel=self.build_tote_label(len(nums)),
             statusLine="",
