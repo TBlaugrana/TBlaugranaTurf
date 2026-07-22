@@ -45,18 +45,23 @@ PMU_CIT_PREFIX = "/rest/client/7/"
 REFRESH_INTERVAL_S = 0.5        # delai minimal entre deux cycles de poll des cotes
 FETCH_TIMEOUT_S = 6             # abandonne un appel PMU trop lent
 SPEED_WINDOW_S = 45             # fenetre glissante pour calculer la vitesse de variation (Gagnant)
-SPEED_THRESHOLD_PCT_PER_MIN = 25 # (non utilise actuellement, badge VALUEBET retire) seuil (variation RELATIVE, en %/min) au-dela duquel un mouvement etait considere "rapide"
+SPEED_THRESHOLD_PCT_PER_MIN = 25 # seuil (variation RELATIVE, en %/min) au-dela duquel le badge eclair est affiche
 REPROG_INTERVAL_S = 45          # recharge le programme en tache de fond toutes les 45s
 DEPART_CHANGE_THRESHOLD_S = 15  # ecart d'heure de depart a partir duquel on considere un retard/avance
 RACE_STALE_S = 6 * 60           # bascule vers la course suivante 6 min apres son depart
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
-GAINERS_TOP_N = 6                # (non utilise actuellement, remplace par le classement par record) ancien nombre de chevaux affiches
 
-# En dessous de ce seuil de cote Gagnant (probabilite implicite, en %), un
-# cheval est considere comme un "tocard" sans chance reelle et masque du
-# tableau — y compris s'il est marque "bigmove" (une progression forte ne
-# suffit pas a le rendre interessant s'il reste sous ce niveau).
-LONGSHOT_HIDE_THRESHOLD_PCT = 6.0
+# REF_LEAD_S : la "cote de reference" (colonne 2 du tableau) est figee des
+# qu'on entre dans cette fenetre avant le depart (3 min). Si le suivi demarre
+# alors qu'il reste deja moins de 3 min avant le depart, c'est la toute
+# premiere cote observee pour chaque cheval qui sert de reference (le
+# meilleur "3 min avant le depart" disponible dans ce cas).
+REF_LEAD_S = 180
+
+# Nombre de chevaux affiches dans le tableau : les TOP_N_CHUTE plus grosses
+# chutes de cote (entre la reference a 3 min et la cote live), triees par
+# ordre de chute decroissant.
+TOP_N_CHUTE = 5
 
 # Lissage exponentiel (EMA) applique a la probabilite implicite (Gagnant) avant
 # tout calcul de delta/vitesse, pour filtrer le bruit tick-par-tick (la cote
@@ -81,9 +86,11 @@ SPEED_MIN_WINDOW_S = 10.0
 # probabilite implicite (+100% relatif, mais seulement +2 points absolus)
 # est un signal au moins aussi fort qu'un favori qui passe de 40% a 42%
 # (+5% relatif). Le calcul en relatif remet les deux cas a la meme echelle.
-BIGMOVE_THRESHOLD_PCT = 15.0
-BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la derniere minute avant le
-                                  # depart (avant, les mouvements sont frequents mais les enjeux sont faibles)
+# Seuil de chute RELATIVE (%) entre la cote de reference (colonne 2, figee a
+# ~3 min du depart) et la cote live (colonne 3) au-dela duquel le signal
+# VALUEBET se declenche. Marquage DEFINITIF : une fois franchi, le cheval
+# reste marque "valuebet" pour le reste de la course.
+VALUEBET_THRESHOLD_PCT = 30.0
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
@@ -202,7 +209,8 @@ class Tracker:
         self.odds_history = {}    # num -> [(t, prob_lissee_ema), ...]
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
-        self.bigmove_seen = {}    # num -> {"delta": ..., "speed": ..., "at": ...} record du plus gros mouvement positif enregistre pendant la derniere minute avant le depart (aucun seuil minimum, sert au classement)
+        self.cote_ref = {}        # num -> cote enregistree ~3 min avant le depart (reference pour le calcul de chute, colonne 2 du tableau)
+        self.valuebet_seen = {}   # num -> {"ecart": ..., "at": ...} des que le seuil de chute VALUEBET_THRESHOLD_PCT est franchi (marquage definitif)
         self.last_reprog = 0.0
         self.last_save = 0.0
 
@@ -223,7 +231,8 @@ class Tracker:
                 "odds_history": self.odds_history,
                 "ema_prob": self.ema_prob,
                 "ema_last_t": self.ema_last_t,
-                "bigmove_seen": self.bigmove_seen,
+                "cote_ref": self.cote_ref,
+                "valuebet_seen": self.valuebet_seen,
                 "saved_at": time.time(),
             }
             tmp_path = STATE_FILE + ".tmp"
@@ -265,7 +274,8 @@ class Tracker:
         self.odds_history = snap.get("odds_history") or {}
         self.ema_prob = snap.get("ema_prob") or {}
         self.ema_last_t = snap.get("ema_last_t") or {}
-        self.bigmove_seen = snap.get("bigmove_seen") or {}
+        self.cote_ref = snap.get("cote_ref") or {}
+        self.valuebet_seen = snap.get("valuebet_seen") or {}
         return self.selected_reunion is not None and self.selected_course is not None
 
     # -- programme -----------------------------------------------------
@@ -339,7 +349,8 @@ class Tracker:
         self.odds_history = {}
         self.ema_prob = {}
         self.ema_last_t = {}
-        self.bigmove_seen = {}
+        self.cote_ref = {}
+        self.valuebet_seen = {}
         set_state(rows=[], snapLine="📸 Rapports probables : en attente")
 
     def refresh_programme_background(self):
@@ -490,92 +501,60 @@ class Tracker:
                 self.favoris_order.append(num)
 
         now = time.time()
-        speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous
+        self.update_speed_history(gagnant_map)  # alimente l'historique (EMA), conserve pour un usage futur eventuel
 
-        # Pour chaque cheval connu : cote Gagnant actuelle (brute, telle
-        # qu'affichee par le PMU), probabilite lissee (EMA) il y a ~15s, et
-        # la variation RELATIVE (%) entre les deux (part de marche
-        # gagnee/perdue, normalisee pour etre comparable entre favoris et
-        # outsiders). Le delta est calcule sur la serie lissee (EMA) pour ne
-        # pas reagir a du bruit tick-par-tick ; seule la cote affichee
-        # ("coteG") reste la valeur brute instantanee du PMU.
-        # -- PASSE 1 : detection / mise a jour des records enregistres --------
-        # Le tableau n'affiche plus le mouvement instantane (qui change a
-        # chaque cycle de 0.5s) mais le PLUS GROS ECART ENREGISTRE pour
-        # chaque cheval pendant la derniere minute avant le depart
-        # (BIGMOVE_ALERT_LEAD_S). Cette valeur est FIGEE : elle ne bouge que
-        # si un mouvement encore plus grand est detecte pour ce cheval,
-        # jamais a chaque cycle. C'est elle (et non plus le delta15 live)
-        # qui sert de critere de classement.
-        deltas = {}
-        in_alert_window = (
-            self.depart_ts is not None
-            and (self.depart_ts - now) <= BIGMOVE_ALERT_LEAD_S
-        )
+        # -- capture de la cote de reference (colonne "Cote -3min") ----------
+        # Des qu'on entre dans la fenetre REF_LEAD_S (3 min) avant le depart,
+        # on fige la cote actuelle de chaque cheval comme reference. Si le
+        # suivi demarre alors qu'il reste deja moins de 3 min avant le
+        # depart, la condition est vraie des la premiere cote recue : c'est
+        # donc la toute premiere cote observee qui sert de reference (le
+        # meilleur "3 min avant le depart" disponible dans ce cas).
+        if self.depart_ts is not None and now >= (self.depart_ts - REF_LEAD_S):
+            for num in nums:
+                if num not in self.cote_ref:
+                    self.cote_ref[num] = gagnant_map[num]["ratio"]
+
+        # -- ecart (chute) entre la cote de reference et la cote live -------
+        # ecart_pct positif = la cote a baisse depuis la reference (chute).
+        candidates = []
         for num in self.favoris_order:
+            ref = self.cote_ref.get(num)
             g = gagnant_map.get(num)
-            cote_g = g["ratio"] if g else None
-            ema_now = self.ema_prob.get(num)
-            ema_15 = self.get_value_at(num, now - DELTA_WINDOW_S) if ema_now is not None else None
-            delta15 = None
-            if ema_now is not None and ema_15 is not None and ema_15 > 0 and ema_now > 0:
-                delta15 = (math.exp(math.log(ema_now) - math.log(ema_15)) - 1) * 100  # variation relative en %
-            deltas[num] = (cote_g, ema_15, delta15)
+            live = g["ratio"] if g else None
+            if ref is None or live is None or ref <= 0:
+                continue  # pas encore de reference ou pas de cote live -> non classable
+            ecart_pct = (ref - live) / ref * 100.0
+            candidates.append((num, ref, live, ecart_pct))
 
-            spd = speed_map.get(num)
+        # VALUEBET : marquage DEFINITIF. Des qu'un cheval franchit le seuil de
+        # chute relative VALUEBET_THRESHOLD_PCT, il reste marque pour le reste
+        # de la course, meme si sa cote remonte ensuite (meme principe que
+        # l'ancien "bigmove_seen").
+        for num, ref, live, ecart_pct in candidates:
+            if ecart_pct >= VALUEBET_THRESHOLD_PCT and num not in self.valuebet_seen:
+                self.valuebet_seen[num] = {"ecart": ecart_pct, "at": now}
 
-            # Marquage DEFINITIF du record : PENDANT la derniere minute avant
-            # le depart, on enregistre TOUT mouvement positif (hausse de part
-            # de marche), meme faible — pas seulement les gros ecarts. Le
-            # classement (trie du plus grand au plus petit ecart) se charge
-            # lui-meme de faire remonter les gros mouvements et de reléguer
-            # les petits ; il n'y a donc pas besoin d'un seuil minimum pour
-            # qu'un cheval soit ne serait-ce que candidat au Top 5. Un nouveau
-            # record n'ecrase l'ancien que s'il est PLUS GRAND : la valeur
-            # affichee ne peut donc que monter, jamais redescendre ni
-            # fluctuer d'un cycle a l'autre.
-            if in_alert_window and delta15 is not None and delta15 > 0:
-                prev = self.bigmove_seen.get(num)
-                if prev is None or delta15 > prev["delta"]:
-                    self.bigmove_seen[num] = {"delta": delta15, "speed": spd, "at": now}
-
-        # -- PASSE 2 : classement par record enregistre (fige), decroissant --
-        # Seuls les chevaux ayant deja un record enregistre sont candidats au
-        # classement ; ceux qui n'en ont pas encore (avant l'ouverture de la
-        # fenetre d'1 minute, ou simplement pas encore de mouvement positif)
-        # passent en dernier et restent masques -> le tableau reste "en
-        # attente" jusqu'a ce qu'un premier ecart soit detecte.
-        def sort_key(n):
-            bm = self.bigmove_seen.get(n)
-            if bm is None:
-                return (True, 0.0)
-            return (False, -bm["delta"])
-
-        display_order = sorted(self.favoris_order, key=sort_key)
+        # Tri par plus grosse chute decroissante ; seuls les TOP_N_CHUTE
+        # premiers restent visibles. Un cheval marque VALUEBET reste affiche
+        # meme s'il sort du top (masque, pas supprime, donc il reapparait
+        # instantanement s'il remonte dans le classement). Un cheval dont la
+        # cote n'a pas (encore) baisse (ecart <= 0) reste masque, sauf s'il
+        # est deja marque VALUEBET.
+        candidates.sort(key=lambda c: -c[3])
 
         rows = []
-        for num in display_order:
-            g = gagnant_map.get(num)
-            cote_g, cote_g15, delta15 = deltas[num]
-            bigmove = self.bigmove_seen.get(num)
-            is_bigmove = bigmove is not None
-
-            # tocard = cote Gagnant actuelle sous le seuil -> masque, meme si
-            # marque bigmove (sous 5% ca reste sans chance reelle)
-            is_longshot = cote_g is not None and cote_g < LONGSHOT_HIDE_THRESHOLD_PCT
-
+        for idx, (num, ref, live, ecart_pct) in enumerate(candidates):
+            is_valuebet = num in self.valuebet_seen
+            hidden = (idx >= TOP_N_CHUTE and not is_valuebet) or (ecart_pct <= 0 and not is_valuebet)
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
-                "coteG": cote_g,                                    # cote actuelle, live (informatif)
-                "deltaRecord": bigmove["delta"] if bigmove else None,   # ecart FIGE, critere de classement
-                "speedRecord": bigmove["speed"] if bigmove else None,   # vitesse FIGEE au moment du record
-                "recordAt": bigmove["at"] if bigmove else None,         # timestamp du record (pour "il y a Xs")
-                "isFavori": bool(g and g.get("favoris")),
-                "isBigMove": is_bigmove,
-                # seuls les chevaux avec un record enregistre (et pas des
-                # tocards) sont candidats a l'affichage dans le top 5
-                "hidden": (not is_bigmove) or is_longshot,
+                "coteRef": ref,
+                "coteLive": live,
+                "ecart": ecart_pct,
+                "isValuebet": is_valuebet,
+                "hidden": hidden,
             })
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
