@@ -581,36 +581,37 @@ class Tracker:
                 self.valuebet_seen[num] = {"ecart": ecart_pct, "at": now}
 
         # Tri par plus grosse chute decroissante (ordre d'affichage).
-        # Masquage : desormais base sur la cote LIVE (colonne 3), recalcule a
-        # CHAQUE cycle -> un cheval est masque des que sa cote live sort de
-        # la plage [LIVE_COTE_MIN, LIVE_COTE_MAX], et reapparait des qu'elle y
-        # rentre a nouveau (aucune memoire d'un cycle a l'autre pour ce
-        # critere). Un cheval marque VALUEBET (chute definitive franchie)
-        # reste neanmoins toujours affiche, meme si sa cote live sort de
-        # cette plage, pour ne jamais perdre de vue le cheval qui a le plus
-        # bouge.
+        # Masquage : base sur la cote LIVE (colonne 3), recalcule a CHAQUE
+        # cycle -> un cheval est masque des que sa cote live sort de la plage
+        # [LIVE_COTE_MIN, LIVE_COTE_MAX], et reapparait des qu'elle y rentre a
+        # nouveau (aucune memoire d'un cycle a l'autre pour ce critere). Ce
+        # critere de plage s'applique SANS exception, meme a un cheval deja
+        # marque VALUEBET.
         candidates.sort(key=lambda c: -c[3])
 
         rows = []
         for idx, (num, ref, live, ecart_pct) in enumerate(candidates):
-            # marquage definitif (reste vrai toute la course une fois franchi,
-            # sert a garder le cheval visible meme si sa cote live sort
-            # ensuite de la plage [5, 20])
+            # marquage definitif (reste vrai toute la course une fois franchi).
+            # Ne protege plus contre le masquage par plage de cote (voir plus
+            # bas) : seule l'exception sur la remontee de cote subsiste.
             was_valuebet = num in self.valuebet_seen
             # signal visuel (tag + surbrillance) : reserve aux chutes ACTUELLES
             # uniquement. Si la cote est ensuite remontee (ecart redevenu <= 0,
             # affiche avec un "+" cote client), le tag valuebet disparait meme
             # si le cheval reste marque "was_valuebet" en interne.
             is_valuebet = was_valuebet and ecart_pct > 0
+            # Hors plage de cote live : masquage STRICT, sans aucune exception
+            # (meme un cheval deja marque VALUEBET est masque des que sa cote
+            # live sort de [LIVE_COTE_MIN, LIVE_COTE_MAX]).
             out_of_range = live < LIVE_COTE_MIN or live > LIVE_COTE_MAX
             # ecart_pct < 0 => cote qui remonte depuis la reference (cheval
             # delaisse), affiche avec un "+" cote client ("ecart positif" au
             # sens de l'affichage). Ces chevaux n'ont aucun interet pour la
-            # chasse au valuebet : on les masque, comme ceux hors plage de
-            # cotes. Un cheval deja marque VALUEBET reste neanmoins toujours
-            # affiche, quoi qu'il arrive.
+            # chasse au valuebet : on les masque, sauf s'ils sont deja marques
+            # VALUEBET (dans ce cas seul le critere de plage de cote peut les
+            # masquer, pas la remontee de cote).
             ecart_affiche_positif = ecart_pct < 0
-            hidden = (out_of_range or ecart_affiche_positif) and not was_valuebet
+            hidden = out_of_range or (ecart_affiche_positif and not was_valuebet)
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
