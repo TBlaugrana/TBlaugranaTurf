@@ -542,12 +542,12 @@ function renderTable(rows, tableMsg){
     const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
-      valuebetEl.title = `Chute de cote ≥ 15% par rapport à la référence T0 (${ecartStr})`;
+      valuebetEl.title = `Chute de cote ≥ 10% par rapport à la référence T0 (${ecartStr})`;
     }
     row.classList.toggle('row-valuebet', isValuebet);
 
     // masquage dynamique : un cheval est masqué dès que sa cote LIVE sort
-    // de la plage [5, 20], et réapparaît instantanément dès qu'elle y
+    // de la plage [6, 20], et réapparaît instantanément dès qu'elle y
     // revient (recalculé à chaque cycle côté serveur, aucune mémoire d'un
     // cycle à l'autre pour ce critère). Un cheval marqué VALUEBET reste
     // toujours affiché, même si sa cote live sort de cette plage.
