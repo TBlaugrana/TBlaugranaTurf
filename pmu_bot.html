@@ -339,7 +339,7 @@
   <div class="table-wrap">
     <div class="table-head">
       <span>Cheval</span>
-      <span>-3min</span>
+      <span>T0</span>
       <span>Live</span>
       <span>Écart</span>
     </div>
@@ -463,7 +463,7 @@ function renderTable(rows, tableMsg){
     }
     if(coteLive !== undefined) lastGagnant[num] = coteLive;
 
-    // cote de référence (figée ~3 min avant le départ)
+    // cote de référence (figée à T0, au moment du départ)
     const coteRefEl = row.querySelector('.cote-ref');
     if(coteRefEl.textContent !== coteRefStr) coteRefEl.textContent = coteRefStr;
     coteRefEl.classList.remove('up','down','flat');
@@ -479,20 +479,21 @@ function renderTable(rows, tableMsg){
     else ecartEl.classList.add('flat');
 
     // Signal "VALUEBET" : marquage DÉFINITIF calculé côté serveur. Dès qu'un
-    // cheval franchit 30% de chute (référence -3min vs cote live), il reste
+    // cheval franchit 30% de chute (référence T0 vs cote live), il reste
     // marqué "valuebet" pour le reste de la course, même si sa cote remonte
     // ensuite — et il reste visible dans le tableau même s'il sort du top 5.
     const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
-      valuebetEl.title = `Chute de cote ≥ 30% par rapport à la référence -3min (${ecartStr})`;
+      valuebetEl.title = `Chute de cote ≥ 30% par rapport à la référence T0 (${ecartStr})`;
     }
     row.classList.toggle('row-valuebet', isValuebet);
 
-    // ne montre que les TOP_N_CHUTE chevaux (5) dont la cote a le plus chuté
-    // depuis la référence -3min ; un cheval qui sort du classement est
-    // simplement masqué (pas supprimé) donc il réapparaît instantanément
-    // dès qu'il y revient — calcul fait côté serveur, en continu
+    // masquage dynamique : un cheval est masqué dès que sa cote LIVE sort
+    // de la plage [5, 20], et réapparaît instantanément dès qu'elle y
+    // revient (recalculé à chaque cycle côté serveur, aucune mémoire d'un
+    // cycle à l'autre pour ce critère). Un cheval marqué VALUEBET reste
+    // toujours affiché, même si sa cote live sort de cette plage.
     row.classList.toggle('row-hidden', !!r.hidden);
 
     rowsEl.appendChild(row);
