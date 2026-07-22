@@ -128,6 +128,7 @@ STATE = {
     "toteLabel": "",
     "departTs": None,
     "rows": [],
+    "tableMsg": "",
     "updatedAt": None,
 }
 
@@ -351,7 +352,7 @@ class Tracker:
         self.ema_last_t = {}
         self.cote_ref = {}
         self.valuebet_seen = {}
-        set_state(rows=[], snapLine="📸 Rapports probables : en attente")
+        set_state(rows=[], tableMsg="⏳ En attente des 3 dernières minutes avant le départ pour figer la cote de référence (suivi déjà actif en arrière-plan).", snapLine="📸 Rapports probables : en attente")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -557,9 +558,21 @@ class Tracker:
                 "hidden": hidden,
             })
 
+        # Message explicatif quand le tableau est vide, pour eviter de laisser
+        # croire a un bug : soit on n'est pas encore dans la fenetre des 3
+        # dernieres minutes avant le depart (cote de reference pas encore
+        # figee), soit on y est mais aucun cheval n'a encore vu sa cote chuter.
+        if rows:
+            table_msg = ""
+        elif self.depart_ts is not None and now < (self.depart_ts - REF_LEAD_S):
+            table_msg = "⏳ En attente des 3 dernières minutes avant le départ pour figer la cote de référence (suivi déjà actif en arrière-plan)."
+        else:
+            table_msg = "Aucun cheval n'a vu sa cote chuter pour l'instant."
+
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
         set_state(
             rows=rows,
+            tableMsg=table_msg,
             snapLine=f"📡 Rapports probables mis a jour — {now_str}",
             toteLabel=self.build_tote_label(len(nums)),
             statusLine="",
