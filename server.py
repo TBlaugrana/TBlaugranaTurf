@@ -92,6 +92,17 @@ SPEED_MIN_WINDOW_S = 10.0
 # reste marque "valuebet" pour le reste de la course.
 VALUEBET_THRESHOLD_PCT = 30.0
 
+# Petite tolerance flottante pour eviter qu'un ecart calcule a exactement 30.0%
+# (mais legerement en-dessous a cause d'arrondis binaires, ex: 29.999999999997)
+# ne declenche pas le signal VALUEBET alors qu'il devrait (30% pile inclus).
+VALUEBET_EPSILON = 1e-9
+
+# Cote de reference (snapshot ~3 min avant le depart) au-dela de laquelle un
+# cheval est definitivement exclu du calcul (jamais affiche, jamais candidat
+# au signal VALUEBET), meme si sa cote live redescend ensuite en dessous de
+# ce seuil.
+COTE_REF_MAX_EXCLU = 30.0
+
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
 
@@ -211,6 +222,7 @@ class Tracker:
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.cote_ref = {}        # num -> cote enregistree ~3 min avant le depart (reference pour le calcul de chute, colonne 2 du tableau)
+        self.cote_ref_excluded = set()  # num -> cheval snapshote avec une cote de reference > COTE_REF_MAX_EXCLU : exclu definitivement du calcul
         self.valuebet_seen = {}   # num -> {"ecart": ..., "at": ...} des que le seuil de chute VALUEBET_THRESHOLD_PCT est franchi (marquage definitif)
         self.last_reprog = 0.0
         self.last_save = 0.0
@@ -233,6 +245,7 @@ class Tracker:
                 "ema_prob": self.ema_prob,
                 "ema_last_t": self.ema_last_t,
                 "cote_ref": self.cote_ref,
+                "cote_ref_excluded": list(self.cote_ref_excluded),
                 "valuebet_seen": self.valuebet_seen,
                 "saved_at": time.time(),
             }
@@ -276,6 +289,7 @@ class Tracker:
         self.ema_prob = snap.get("ema_prob") or {}
         self.ema_last_t = snap.get("ema_last_t") or {}
         self.cote_ref = snap.get("cote_ref") or {}
+        self.cote_ref_excluded = set(snap.get("cote_ref_excluded") or [])
         self.valuebet_seen = snap.get("valuebet_seen") or {}
         return self.selected_reunion is not None and self.selected_course is not None
 
@@ -351,6 +365,7 @@ class Tracker:
         self.ema_prob = {}
         self.ema_last_t = {}
         self.cote_ref = {}
+        self.cote_ref_excluded = set()
         self.valuebet_seen = {}
         set_state(rows=[], tableMsg="⏳ En attente des 3 dernières minutes avant le départ pour figer la cote de référence (suivi déjà actif en arrière-plan).", snapLine="📸 Rapports probables : en attente")
 
@@ -528,8 +543,16 @@ class Tracker:
         # meilleur "3 min avant le depart" disponible dans ce cas).
         if self.depart_ts is not None and now >= (self.depart_ts - REF_LEAD_S):
             for num in nums:
-                if num not in self.cote_ref:
-                    self.cote_ref[num] = gagnant_map[num]["ratio"]
+                if num in self.cote_ref or num in self.cote_ref_excluded:
+                    continue
+                ratio = gagnant_map[num]["ratio"]
+                if ratio > COTE_REF_MAX_EXCLU:
+                    # cote de reference snapshotee au-dela de 30 : cheval
+                    # exclu definitivement du calcul (jamais de reference
+                    # figee pour lui, meme si sa cote redescend ensuite)
+                    self.cote_ref_excluded.add(num)
+                else:
+                    self.cote_ref[num] = ratio
 
         # -- ecart (chute) entre la cote de reference et la cote live -------
         # ecart_pct positif = la cote a baisse depuis la reference (chute).
@@ -548,7 +571,7 @@ class Tracker:
         # de la course, meme si sa cote remonte ensuite (meme principe que
         # l'ancien "bigmove_seen").
         for num, ref, live, ecart_pct in candidates:
-            if ecart_pct >= VALUEBET_THRESHOLD_PCT and num not in self.valuebet_seen:
+            if ecart_pct >= VALUEBET_THRESHOLD_PCT - VALUEBET_EPSILON and num not in self.valuebet_seen:
                 self.valuebet_seen[num] = {"ecart": ecart_pct, "at": now}
 
         # Tri par plus grosse chute decroissante ; seuls les TOP_N_CHUTE
@@ -561,8 +584,16 @@ class Tracker:
 
         rows = []
         for idx, (num, ref, live, ecart_pct) in enumerate(candidates):
-            is_valuebet = num in self.valuebet_seen
-            hidden = (idx >= TOP_N_CHUTE and not is_valuebet) or (ecart_pct <= 0 and not is_valuebet)
+            # marquage definitif (reste vrai toute la course une fois franchi,
+            # sert a garder le cheval visible meme s'il sort du top 5 ou que
+            # sa cote remonte ensuite)
+            was_valuebet = num in self.valuebet_seen
+            # signal visuel (tag + surbrillance) : reserve aux chutes ACTUELLES
+            # uniquement. Si la cote est ensuite remontee (ecart redevenu <= 0,
+            # affiche avec un "+" cote client), le tag valuebet disparait meme
+            # si le cheval reste marque "was_valuebet" en interne.
+            is_valuebet = was_valuebet and ecart_pct > 0
+            hidden = (idx >= TOP_N_CHUTE and not was_valuebet) or (ecart_pct <= 0 and not was_valuebet)
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
