@@ -88,7 +88,7 @@ SPEED_MIN_WINDOW_S = 10.0
 # T0) et la cote live (colonne 3) au-dela duquel le signal VALUEBET se
 # declenche. Marquage DEFINITIF : une fois franchi, le cheval reste marque
 # "valuebet" pour le reste de la course.
-VALUEBET_THRESHOLD_PCT = 15.0
+VALUEBET_THRESHOLD_PCT = 10.0
 
 # Petite tolerance flottante pour eviter qu'un ecart calcule a exactement 30.0%
 # (mais legerement en-dessous a cause d'arrondis binaires, ex: 29.999999999997)
@@ -101,7 +101,7 @@ VALUEBET_EPSILON = 1e-9
 # recalcule a CHAQUE cycle de poll a partir de la cote live : un cheval peut
 # donc apparaitre ou disparaitre du tableau d'un cycle a l'autre, selon
 # l'evolution de sa cote live.
-LIVE_COTE_MIN = 5.0
+LIVE_COTE_MIN = 6.0
 LIVE_COTE_MAX = 20.0
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
