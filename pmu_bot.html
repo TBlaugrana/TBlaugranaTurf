@@ -194,38 +194,6 @@
     color:var(--text-dim);
     margin-top:4px;
   }
-  .live-odds-info{
-    margin-top:10px;
-    background:var(--surface-alt);
-    border:1px dashed var(--border);
-    border-radius:9px;
-    padding:8px 12px;
-  }
-  .live-odds-info-title{
-    font-family:'JetBrains Mono',monospace;
-    font-size:10px;
-    text-transform:uppercase;
-    letter-spacing:.1em;
-    color:var(--text-dim);
-    text-align:center;
-    margin-bottom:6px;
-  }
-  .live-odds-info-list{
-    display:flex;
-    flex-wrap:wrap;
-    justify-content:center;
-    gap:6px 10px;
-    font-family:'JetBrains Mono',monospace;
-    font-size:12.5px;
-  }
-  .live-odds-info-list .lo-item{
-    color:var(--text);
-    white-space:nowrap;
-  }
-  .live-odds-info-list .lo-cote{
-    color:var(--accent-2);
-    font-weight:700;
-  }
   .status-line{
     text-align:center;
     font-size:11px;
@@ -347,6 +315,58 @@
     font-size:13px;
     padding:30px 10px;
   }
+
+  /* Transition jouee au moment du snapshot (T0) : le tableau "cotes brutes"
+     (avant depart) disparait, puis le tableau "criteres" (valuebet, ecarts...)
+     apparait a sa place. */
+  #rows.rows-swap-out{
+    animation: rowsSwapOut .28s ease forwards;
+  }
+  #rows.rows-swap-in{
+    animation: rowsSwapIn .38s ease;
+  }
+  @keyframes rowsSwapOut{
+    from{ opacity:1; transform:translateY(0) scale(1); }
+    to{ opacity:0; transform:translateY(-8px) scale(.97); }
+  }
+  @keyframes rowsSwapIn{
+    from{ opacity:0; transform:translateY(8px) scale(.98); }
+    to{ opacity:1; transform:translateY(0) scale(1); }
+  }
+
+  /* Adaptation pour petits ecrans (iPhone 14 Pro et similaires, ~390-430px
+     de large) : reduit polices/paddings/colonnes pour eviter que le nom du
+     cheval ne s'ecrase contre les colonnes de cotes. */
+  @media (max-width:430px){
+    .page{ padding:8px 12px 14px; }
+    .table-head{
+      grid-template-columns: 1fr 40px 40px 52px;
+      gap:4px;
+      padding:0 10px 6px;
+      font-size:10.5px;
+    }
+    .row{
+      grid-template-columns: 1fr 40px 40px 52px;
+      gap:4px;
+      padding:13px 10px;
+    }
+    .row.row-valuebet{ padding-top:26px; }
+    .num-badge{
+      width:25px; height:25px;
+      font-size:11.5px;
+    }
+    .horse-name{
+      font-size:13.5px;
+      line-height:1.15;
+    }
+    .cote-ref, .cote, .ecart{
+      font-size:13px;
+    }
+    .valuebet-tag{
+      font-size:8px;
+      padding:2px 6px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -365,7 +385,6 @@
     <div class="tote-clock" id="countdown">--:--</div>
     <div class="tote-label" id="toteLabel"></div>
   </div>
-  <div class="live-odds-info" id="liveOddsInfo" style="display:none;"></div>
   <div class="snap-line" id="snapLine" style="display:none;">📸 Snapshot : en attente</div>
   <div class="status-line" id="statusLine"></div>
 
@@ -397,7 +416,6 @@ const HORSE_NAME_MAX_CHARS = 8; // tronque l'affichage du nom pour garder le tab
 const courseInfoEl = document.getElementById('courseInfo');
 const countdownEl = document.getElementById('countdown');
 const snapLineEl = document.getElementById('snapLine');
-const liveOddsInfoEl = document.getElementById('liveOddsInfo');
 const statusLineEl = document.getElementById('statusLine');
 const toteLabelEl = document.getElementById('toteLabel');
 const rowsEl = document.getElementById('rows');
@@ -406,6 +424,8 @@ let rowEls = {};        // num -> élément DOM de la ligne (réutilisé d'un cy
 let lastGagnant = {};   // num -> dernière cote Gagnant affichée (pour détecter les variations et flasher)
 let departTs = null;
 let pollTimer = null;
+let prevBeforeSnapshot = null; // suivi de l'etat avant/apres T0, pour detecter le moment du snapshot
+let snapAnimInProgress = false;
 
 function fmtCountdown(secs){
   if(secs >= 0){
@@ -562,19 +582,45 @@ function renderTable(rows, tableMsg){
   });
 }
 
-function renderLiveOddsInfo(list){
-  if(!list || list.length === 0){
-    liveOddsInfoEl.style.display = 'none';
-    return;
-  }
-  const items = list.map(r=>{
-    const nom = (r.nom || `#${r.num}`);
-    const nomAffiche = nom.length > HORSE_NAME_MAX_CHARS ? nom.slice(0, HORSE_NAME_MAX_CHARS) : nom;
-    const cote = (r.coteLive === null || r.coteLive === undefined) ? '—' : r.coteLive.toFixed(1);
-    return `<span class="lo-item" title="${nom}">#${r.num} ${nomAffiche} <span class="lo-cote">${cote}</span></span>`;
-  }).join('');
-  liveOddsInfoEl.innerHTML = `<div class="live-odds-info-title">📊 Cotes live (ordre croissant) — avant T0</div><div class="live-odds-info-list">${items}</div>`;
-  liveOddsInfoEl.style.display = 'block';
+// Avant le snapshot (T0), on n'a pas encore de cote de reference ni d'ecart :
+// on reutilise le meme tableau (#rows) que le tableau "criteres" habituel,
+// mais avec uniquement la cote live (colonnes T0/Ecart a "—"), triee du
+// favori au plus outsider. Ainsi les cotes s'affichent bien DANS le tableau
+// et non plus au-dessus.
+function mapPreviewRows(liveOddsSorted){
+  if(!liveOddsSorted) return [];
+  return liveOddsSorted.map(r=>({
+    num: r.num,
+    nom: r.nom,
+    coteRef: undefined,
+    coteLive: r.coteLive,
+    ecart: undefined,
+    isValuebet: false,
+    hidden: false,
+  }));
+}
+
+// Anime la bascule entre le tableau "cotes live" (avant T0) et le tableau
+// "criteres" (valuebet/ecarts, apres T0) : le premier disparait, puis le
+// second apparait a sa place.
+function animateSnapshotSwap(renderFn){
+  if(snapAnimInProgress) return;
+  snapAnimInProgress = true;
+  rowsEl.classList.remove('rows-swap-in');
+  rowsEl.classList.add('rows-swap-out');
+  setTimeout(()=>{
+    rowsEl.classList.remove('rows-swap-out');
+    // reconstruction complete : on abandonne les elements de l'ancien
+    // tableau (cotes brutes) pour repartir sur des lignes fraiches.
+    rowEls = {};
+    rowsEl.innerHTML = '';
+    renderFn();
+    rowsEl.classList.add('rows-swap-in');
+    setTimeout(()=>{
+      rowsEl.classList.remove('rows-swap-in');
+      snapAnimInProgress = false;
+    }, 400);
+  }, 280);
 }
 
 function applyState(data){
@@ -587,13 +633,6 @@ function applyState(data){
   }
   snapLineEl.style.display = 'none';
 
-  // Bloc informatif "cotes live triees" : uniquement avant le snapshot a T0
-  // (avant que la cote de reference ne soit figee au depart). Purement
-  // informatif, disparait des que le depart est atteint.
-  const nowSecs = Date.now() / 1000;
-  const beforeSnapshot = data.departTs !== null && data.departTs !== undefined && nowSecs < data.departTs;
-  renderLiveOddsInfo(beforeSnapshot ? data.liveOddsSorted : null);
-
   if(data.statusLine){
     statusLineEl.textContent = data.statusLine;
     statusLineEl.style.color = data.statusLine.startsWith('Erreur') ? 'var(--danger)' : 'var(--text-dim)';
@@ -601,7 +640,22 @@ function applyState(data){
     statusLineEl.textContent = '';
   }
 
-  renderTable(data.rows, data.tableMsg);
+  // Avant le snapshot a T0 (cote de reference pas encore figee), le tableau
+  // affiche directement les cotes live triees (favori -> outsider). Des que
+  // T0 est atteint, on bascule (avec une petite animation) vers le tableau
+  // habituel base sur les criteres (ecart, valuebet...).
+  const nowSecs = Date.now() / 1000;
+  const beforeSnapshot = data.departTs !== null && data.departTs !== undefined && nowSecs < data.departTs;
+  const justSnapped = prevBeforeSnapshot === true && beforeSnapshot === false;
+  prevBeforeSnapshot = beforeSnapshot;
+
+  if(beforeSnapshot){
+    renderTable(mapPreviewRows(data.liveOddsSorted), 'En attente des premières cotes…');
+  } else if(justSnapped && !snapAnimInProgress){
+    animateSnapshotSwap(()=> renderTable(data.rows, data.tableMsg));
+  } else {
+    renderTable(data.rows, data.tableMsg);
+  }
 }
 
 async function pollState(){
