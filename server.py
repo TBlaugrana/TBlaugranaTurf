@@ -100,7 +100,7 @@ HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
 # a la selection automatique et n'apparaissent jamais dans l'etat renvoye
 # au bot). Mettre a False pour revenir au comportement d'origine (toutes
 # les reunions, France + etranger).
-HIDE_FOREIGN_RACES = True
+HIDE_FOREIGN_RACES = False
 
 # Codes pays consideres comme "France" (l'API PMU utilise normalement "FRA").
 # Liste au cas ou un autre libelle serait renvoye pour certaines reunions.
