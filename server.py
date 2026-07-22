@@ -51,17 +51,15 @@ DEPART_CHANGE_THRESHOLD_S = 15  # ecart d'heure de depart a partir duquel on con
 RACE_STALE_S = 6 * 60           # bascule vers la course suivante 6 min apres son depart
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 
-# REF_LEAD_S : la "cote de reference" (colonne 2 du tableau) est figee des
-# qu'on entre dans cette fenetre avant le depart (3 min). Si le suivi demarre
-# alors qu'il reste deja moins de 3 min avant le depart, c'est la toute
-# premiere cote observee pour chaque cheval qui sert de reference (le
-# meilleur "3 min avant le depart" disponible dans ce cas).
-REF_LEAD_S = 180
+# REF_LEAD_S : la "cote de reference" (colonne 2 du tableau, "T0") est figee
+# des qu'on entre dans cette fenetre avant le depart. Mise a 0 : la reference
+# est donc figee au moment du depart (T0) et non plus 3 min avant. Si le
+# suivi demarre alors qu'il reste deja moins de temps que cette fenetre avant
+# le depart, c'est la toute premiere cote observee pour chaque cheval qui
+# sert de reference (le meilleur "T0" disponible dans ce cas).
+REF_LEAD_S = 0
 
-# Nombre de chevaux affiches dans le tableau : les TOP_N_CHUTE plus grosses
-# chutes de cote (entre la reference a 3 min et la cote live), triees par
-# ordre de chute decroissant.
-TOP_N_CHUTE = 5
+
 
 # Lissage exponentiel (EMA) applique a la probabilite implicite (Gagnant) avant
 # tout calcul de delta/vitesse, pour filtrer le bruit tick-par-tick (la cote
@@ -87,9 +85,9 @@ SPEED_MIN_WINDOW_S = 10.0
 # est un signal au moins aussi fort qu'un favori qui passe de 40% a 42%
 # (+5% relatif). Le calcul en relatif remet les deux cas a la meme echelle.
 # Seuil de chute RELATIVE (%) entre la cote de reference (colonne 2, figee a
-# ~3 min du depart) et la cote live (colonne 3) au-dela duquel le signal
-# VALUEBET se declenche. Marquage DEFINITIF : une fois franchi, le cheval
-# reste marque "valuebet" pour le reste de la course.
+# T0) et la cote live (colonne 3) au-dela duquel le signal VALUEBET se
+# declenche. Marquage DEFINITIF : une fois franchi, le cheval reste marque
+# "valuebet" pour le reste de la course.
 VALUEBET_THRESHOLD_PCT = 30.0
 
 # Petite tolerance flottante pour eviter qu'un ecart calcule a exactement 30.0%
@@ -97,11 +95,14 @@ VALUEBET_THRESHOLD_PCT = 30.0
 # ne declenche pas le signal VALUEBET alors qu'il devrait (30% pile inclus).
 VALUEBET_EPSILON = 1e-9
 
-# Cote de reference (snapshot ~3 min avant le depart) au-dela de laquelle un
-# cheval est definitivement exclu du calcul (jamais affiche, jamais candidat
-# au signal VALUEBET), meme si sa cote live redescend ensuite en dessous de
-# ce seuil.
-COTE_REF_MAX_EXCLU = 30.0
+# Plage de cote LIVE (colonne 3 du tableau) en dehors de laquelle un cheval
+# est masque. Contrairement a l'ancienne exclusion (figee une fois pour
+# toutes sur la cote de reference au moment du snapshot), ce filtre est
+# recalcule a CHAQUE cycle de poll a partir de la cote live : un cheval peut
+# donc apparaitre ou disparaitre du tableau d'un cycle a l'autre, selon
+# l'evolution de sa cote live.
+LIVE_COTE_MIN = 5.0
+LIVE_COTE_MAX = 20.0
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
@@ -221,8 +222,7 @@ class Tracker:
         self.odds_history = {}    # num -> [(t, prob_lissee_ema), ...]
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
-        self.cote_ref = {}        # num -> cote enregistree ~3 min avant le depart (reference pour le calcul de chute, colonne 2 du tableau)
-        self.cote_ref_excluded = set()  # num -> cheval snapshote avec une cote de reference > COTE_REF_MAX_EXCLU : exclu definitivement du calcul
+        self.cote_ref = {}        # num -> cote enregistree a T0 (reference pour le calcul de chute, colonne 2 du tableau)
         self.valuebet_seen = {}   # num -> {"ecart": ..., "at": ...} des que le seuil de chute VALUEBET_THRESHOLD_PCT est franchi (marquage definitif)
         self.last_reprog = 0.0
         self.last_save = 0.0
@@ -245,7 +245,6 @@ class Tracker:
                 "ema_prob": self.ema_prob,
                 "ema_last_t": self.ema_last_t,
                 "cote_ref": self.cote_ref,
-                "cote_ref_excluded": list(self.cote_ref_excluded),
                 "valuebet_seen": self.valuebet_seen,
                 "saved_at": time.time(),
             }
@@ -289,7 +288,6 @@ class Tracker:
         self.ema_prob = snap.get("ema_prob") or {}
         self.ema_last_t = snap.get("ema_last_t") or {}
         self.cote_ref = snap.get("cote_ref") or {}
-        self.cote_ref_excluded = set(snap.get("cote_ref_excluded") or [])
         self.valuebet_seen = snap.get("valuebet_seen") or {}
         return self.selected_reunion is not None and self.selected_course is not None
 
@@ -365,9 +363,8 @@ class Tracker:
         self.ema_prob = {}
         self.ema_last_t = {}
         self.cote_ref = {}
-        self.cote_ref_excluded = set()
         self.valuebet_seen = {}
-        set_state(rows=[], tableMsg="⏳ En attente des 3 dernières minutes avant le départ pour figer la cote de référence (suivi déjà actif en arrière-plan).", snapLine="📸 Rapports probables : en attente")
+        set_state(rows=[], tableMsg="⏳ En attente du départ (T0) pour figer la cote de référence (suivi déjà actif en arrière-plan).", snapLine="📸 Rapports probables : en attente")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -411,7 +408,7 @@ class Tracker:
         Gagnant de 1E rapporte 4.60E), depuis l'endpoint /participants —
         par opposition a l'ancien endpoint /citations qui renvoyait une
         probabilite implicite en %. Plus la cote est BASSE, plus le cheval
-        est favori ; une cote qui BAISSE entre la reference -3min et le
+        est favori ; une cote qui BAISSE entre la reference T0 et le
         live signifie donc que le cheval est de plus en plus joue (chute de
         cote au sens classique du terme).
         Le champ principal est 'dernierRapportDirect.rapport' (cote en
@@ -534,25 +531,18 @@ class Tracker:
         now = time.time()
         self.update_speed_history(gagnant_map)  # alimente l'historique (EMA), conserve pour un usage futur eventuel
 
-        # -- capture de la cote de reference (colonne "Cote -3min") ----------
-        # Des qu'on entre dans la fenetre REF_LEAD_S (3 min) avant le depart,
-        # on fige la cote actuelle de chaque cheval comme reference. Si le
-        # suivi demarre alors qu'il reste deja moins de 3 min avant le
-        # depart, la condition est vraie des la premiere cote recue : c'est
-        # donc la toute premiere cote observee qui sert de reference (le
-        # meilleur "3 min avant le depart" disponible dans ce cas).
+        # -- capture de la cote de reference (colonne "Cote T0") --------------
+        # Des qu'on entre dans la fenetre REF_LEAD_S (0 = au depart, T0) avant
+        # le depart, on fige la cote actuelle de chaque cheval comme
+        # reference. Si le suivi demarre alors qu'il reste deja moins de
+        # temps que cette fenetre avant le depart, la condition est vraie des
+        # la premiere cote recue : c'est donc la toute premiere cote observee
+        # qui sert de reference (le meilleur "T0" disponible dans ce cas).
         if self.depart_ts is not None and now >= (self.depart_ts - REF_LEAD_S):
             for num in nums:
-                if num in self.cote_ref or num in self.cote_ref_excluded:
+                if num in self.cote_ref:
                     continue
-                ratio = gagnant_map[num]["ratio"]
-                if ratio > COTE_REF_MAX_EXCLU:
-                    # cote de reference snapshotee au-dela de 30 : cheval
-                    # exclu definitivement du calcul (jamais de reference
-                    # figee pour lui, meme si sa cote redescend ensuite)
-                    self.cote_ref_excluded.add(num)
-                else:
-                    self.cote_ref[num] = ratio
+                self.cote_ref[num] = gagnant_map[num]["ratio"]
 
         # -- ecart (chute) entre la cote de reference et la cote live -------
         # ecart_pct positif = la cote a baisse depuis la reference (chute).
@@ -574,26 +564,30 @@ class Tracker:
             if ecart_pct >= VALUEBET_THRESHOLD_PCT - VALUEBET_EPSILON and num not in self.valuebet_seen:
                 self.valuebet_seen[num] = {"ecart": ecart_pct, "at": now}
 
-        # Tri par plus grosse chute decroissante ; seuls les TOP_N_CHUTE
-        # premiers restent visibles. Un cheval marque VALUEBET reste affiche
-        # meme s'il sort du top (masque, pas supprime, donc il reapparait
-        # instantanement s'il remonte dans le classement). Un cheval dont la
-        # cote n'a pas (encore) baisse (ecart <= 0) reste masque, sauf s'il
-        # est deja marque VALUEBET.
+        # Tri par plus grosse chute decroissante (ordre d'affichage).
+        # Masquage : desormais base sur la cote LIVE (colonne 3), recalcule a
+        # CHAQUE cycle -> un cheval est masque des que sa cote live sort de
+        # la plage [LIVE_COTE_MIN, LIVE_COTE_MAX], et reapparait des qu'elle y
+        # rentre a nouveau (aucune memoire d'un cycle a l'autre pour ce
+        # critere). Un cheval marque VALUEBET (chute definitive franchie)
+        # reste neanmoins toujours affiche, meme si sa cote live sort de
+        # cette plage, pour ne jamais perdre de vue le cheval qui a le plus
+        # bouge.
         candidates.sort(key=lambda c: -c[3])
 
         rows = []
         for idx, (num, ref, live, ecart_pct) in enumerate(candidates):
             # marquage definitif (reste vrai toute la course une fois franchi,
-            # sert a garder le cheval visible meme s'il sort du top 5 ou que
-            # sa cote remonte ensuite)
+            # sert a garder le cheval visible meme si sa cote live sort
+            # ensuite de la plage [5, 20])
             was_valuebet = num in self.valuebet_seen
             # signal visuel (tag + surbrillance) : reserve aux chutes ACTUELLES
             # uniquement. Si la cote est ensuite remontee (ecart redevenu <= 0,
             # affiche avec un "+" cote client), le tag valuebet disparait meme
             # si le cheval reste marque "was_valuebet" en interne.
             is_valuebet = was_valuebet and ecart_pct > 0
-            hidden = (idx >= TOP_N_CHUTE and not was_valuebet) or (ecart_pct <= 0 and not was_valuebet)
+            out_of_range = live < LIVE_COTE_MIN or live > LIVE_COTE_MAX
+            hidden = out_of_range and not was_valuebet
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
@@ -605,15 +599,15 @@ class Tracker:
             })
 
         # Message explicatif quand le tableau est vide, pour eviter de laisser
-        # croire a un bug : soit on n'est pas encore dans la fenetre des 3
-        # dernieres minutes avant le depart (cote de reference pas encore
-        # figee), soit on y est mais aucun cheval n'a encore vu sa cote chuter.
+        # croire a un bug : soit on n'est pas encore a T0 (cote de reference
+        # pas encore figee), soit on y est mais aucun cheval n'a de cote live
+        # dans la plage [LIVE_COTE_MIN, LIVE_COTE_MAX] (ou marque VALUEBET).
         if rows:
             table_msg = ""
         elif self.depart_ts is not None and now < (self.depart_ts - REF_LEAD_S):
-            table_msg = "⏳ En attente des 3 dernières minutes avant le départ pour figer la cote de référence (suivi déjà actif en arrière-plan)."
+            table_msg = "⏳ En attente de T0 (départ) pour figer la cote de référence (suivi déjà actif en arrière-plan)."
         else:
-            table_msg = "Aucun cheval n'a vu sa cote chuter pour l'instant."
+            table_msg = f"Aucun cheval avec une cote live entre {LIVE_COTE_MIN:.0f} et {LIVE_COTE_MAX:.0f} pour l'instant."
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
         set_state(
@@ -716,4 +710,3 @@ if __name__ == "__main__":
     with ThreadingHTTPServer(("0.0.0.0", PORT), Handler) as httpd:
         print(f"Serveur lance sur le port {PORT} (suivi PMU actif en tache de fond)")
         httpd.serve_forever()
-
