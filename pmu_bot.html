@@ -229,15 +229,18 @@
     border-radius:9px;
     padding:9px 12px;
     box-sizing:border-box;
+    display:grid;
+    grid-template-columns: 1fr 62px 62px 62px;
+    gap:8px;
+    align-items:center;
     transition: transform .35s ease, background-color .4s ease;
   }
   .row.row-hidden{ display:none; }
   .row.flash-up{ background:var(--success-bg); }
   .row.flash-down{ background:var(--danger-bg); }
 
-  /* Un seul signal visuel fort, réservé au cas où 🔥 gros écart ET
-     ⚡ mouvement rapide sont vrais EN MÊME TEMPS sur le même cheval.
-     Rien n'est affiché si un seul des deux critères est rempli. */
+  /* Un seul signal visuel fort, réservé au cheval ayant franchi le seuil de
+     chute VALUEBET_THRESHOLD_PCT. */
   .row.row-valuebet{
     border:2px solid var(--tote-fg);
     background:linear-gradient(0deg, rgba(232,178,77,.12), rgba(232,178,77,.12)), var(--surface);
@@ -259,16 +262,10 @@
   }
   .row.row-valuebet .valuebet-tag{ display:inline-block; }
 
-  .row-top{
-    display:flex;
-    align-items:center;
-    gap:9px;
-  }
   .horse{
     display:flex;
     align-items:center;
     gap:9px;
-    flex:1;
     min-width:0;
   }
   .num-badge{
@@ -285,48 +282,27 @@
   .horse-name{
     flex:1;
     min-width:0;
-    font-size:15.5px;
+    font-size:14.5px;
     font-weight:600;
     color:var(--text);
     white-space:normal;
     line-height:1.15;
   }
-  .fav-rank{
-    font-style:italic;
-    font-weight:400;
-    font-size:11.5px;
-    color:var(--text-dim);
-    margin-left:5px;
-  }
   .late-badge{ flex:none; font-size:12px; margin-left:2px; }
   .row-late{ border-style:dashed; }
-  .cote{
-    flex:none;
+
+  .cote-ref, .cote, .ecart{
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
     font-weight:700;
-    font-size:15px;
-    color:var(--accent);
+    font-size:14px;
     text-align:right;
-    min-width:44px;
   }
-
-  .row-bottom{
-    display:flex;
-    align-items:center;
-    gap:10px;
-    margin:5px 0 0 33px;
-    font-family:'JetBrains Mono',monospace;
-    font-variant-numeric:tabular-nums;
-    font-size:11.5px;
-  }
-  .stat{ display:flex; align-items:center; gap:3px; }
-  .stat .lbl{ text-transform:uppercase; font-size:9px; letter-spacing:.06em; color:var(--text-dim); opacity:.7; }
-  .cote-ref, .ecart{ font-weight:700; }
+  .cote{ color:var(--accent); }
+  .cote-ref{ font-weight:600; color:var(--text-dim); }
   .cote-ref.up, .ecart.up{ color:var(--success); }
   .cote-ref.down, .ecart.down{ color:var(--danger); }
   .cote-ref.flat, .ecart.flat{ color:var(--text-dim); }
-  .stat-dot{ width:3px; height:3px; border-radius:50%; background:var(--border); }
 
   .empty{
     text-align:center;
@@ -419,18 +395,13 @@ function buildRow(num){
   row.dataset.num = num;
   row.innerHTML = `
     <span class="valuebet-tag">🔥 VALUEBET 🔥</span>
-    <div class="row-top">
-      <div class="horse">
-        <span class="num-badge"></span>
-        <span class="horse-name"><span class="name-text"></span></span>
-      </div>
-      <div class="cote"></div>
+    <div class="horse">
+      <span class="num-badge"></span>
+      <span class="horse-name"><span class="name-text"></span></span>
     </div>
-    <div class="row-bottom">
-      <span class="stat"><span class="lbl">-3min</span><span class="cote-ref flat">—</span></span>
-      <span class="stat-dot"></span>
-      <span class="stat"><span class="lbl">Écart</span><span class="ecart flat">—</span></span>
-    </div>
+    <span class="cote-ref flat">—</span>
+    <span class="cote">—</span>
+    <span class="ecart flat">—</span>
   `;
   row.querySelector('.num-badge').textContent = num;
   return row;
