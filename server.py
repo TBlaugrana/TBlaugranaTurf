@@ -391,23 +391,38 @@ class Tracker:
         # sinon : la course a disparu du programme mais n'est pas encore consideree "stale" -> on continue de la suivre
 
     # -- cotes -----------------------------------------------------------
-    def parse_citations(self, data):
-        gagnant_map, place_map = {}, {}
-        for g in (data.get("listeCitations") or []):
-            type_pari = g.get("typePari")
-            target = place_map if type_pari == "SIMPLE_PLACE" else gagnant_map if type_pari == "SIMPLE_GAGNANT" else None
-            if target is None:
+    def parse_participants(self, data):
+        """Extrait la vraie cote PMU (le rapport reel, ex: 4.60 = un pari
+        Gagnant de 1E rapporte 4.60E), depuis l'endpoint /participants —
+        par opposition a l'ancien endpoint /citations qui renvoyait une
+        probabilite implicite en %. Plus la cote est BASSE, plus le cheval
+        est favori ; une cote qui BAISSE entre la reference -3min et le
+        live signifie donc que le cheval est de plus en plus joue (chute de
+        cote au sens classique du terme).
+        Le champ principal est 'dernierRapportDirect.rapport' (cote en
+        direct) ; quelques variantes de nommage sont tentees en repli au cas
+        ou l'API renverrait une structure legerement differente.
+        """
+        gagnant_map = {}
+        for p in (data.get("participants") or []):
+            if p.get("statut") != "PARTANT":
                 continue
-            for p in (g.get("participants") or []):
-                if p.get("statut") != "PARTANT":
-                    continue
-                cits = p.get("citations") or []
-                ratio = cits[0].get("ratio") if cits else None
-                if ratio is None:
-                    continue
-                num = str(p.get("numPmu"))
-                target[num] = {"nom": p.get("nom") or f"#{num}", "ratio": ratio, "favoris": bool(p.get("favoris"))}
-        return gagnant_map, place_map
+            num = str(p.get("numPmu"))
+            nom = p.get("nom") or f"#{num}"
+            rapport = None
+            direct = p.get("dernierRapportDirect") or {}
+            if isinstance(direct, dict):
+                rapport = direct.get("rapport")
+            if rapport is None:
+                rapport = p.get("rapportGagnant")
+            if rapport is None:
+                ref = p.get("dernierRapportReference") or {}
+                if isinstance(ref, dict):
+                    rapport = ref.get("rapport")
+            if rapport is None:
+                continue
+            gagnant_map[num] = {"nom": nom, "ratio": float(rapport), "favoris": bool(p.get("favoris"))}
+        return gagnant_map
 
     def get_value_at(self, num, target_t):
         """Renvoie la probabilite Gagnant (%) lissee (EMA) historique la plus
@@ -450,7 +465,7 @@ class Tracker:
         now = time.time()
         speed = {}
         for num, info in gagnant_map.items():
-            cote = info["ratio"]  # "ratio" est deja le % Gagnant affiche (probabilite implicite)
+            cote = info["ratio"]  # "ratio" est la cote reelle PMU (rapport), pas un %
             if cote is None or cote <= 0:
                 continue
 
@@ -491,7 +506,7 @@ class Tracker:
         return " · ".join(parts)
 
     def handle_odds(self, data):
-        gagnant_map, _place_map = self.parse_citations(data)  # place n'est plus utilise
+        gagnant_map = self.parse_participants(data)
         nums = set(gagnant_map.keys())
         if not nums:
             return
@@ -584,10 +599,10 @@ class Tracker:
         if self.selected_reunion is None or self.selected_course is None:
             return
         today = datetime.now(PARIS_TZ)
-        path = (f"{PMU_CIT_PREFIX}programme/{date_pmu(today)}/R{self.selected_reunion}/C{self.selected_course}"
-                f"/citations?paris=SIMPLE_GAGNANT&specialisation=OFFLINE&groupe=true")
+        path = (f"{PMU_PROG_PREFIX}programme/{date_pmu(today)}/R{self.selected_reunion}/C{self.selected_course}"
+                f"/participants")
         try:
-            data = http_get_json(PMU_CIT_HOST, path)
+            data = http_get_json(PMU_PROG_HOST, path)
             self.handle_odds(data)
         except Exception as e:
             set_state(statusLine=f"Erreur cotes : {e}")
