@@ -485,7 +485,7 @@ function renderTable(rows, tableMsg){
     const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
-      valuebetEl.title = `Chute de cote ≥ 30% par rapport à la référence T0 (${ecartStr})`;
+      valuebetEl.title = `Chute de cote ≥ 15% par rapport à la référence T0 (${ecartStr})`;
     }
     row.classList.toggle('row-valuebet', isValuebet);
 
