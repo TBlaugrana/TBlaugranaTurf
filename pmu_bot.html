@@ -194,6 +194,38 @@
     color:var(--text-dim);
     margin-top:4px;
   }
+  .live-odds-info{
+    margin-top:10px;
+    background:var(--surface-alt);
+    border:1px dashed var(--border);
+    border-radius:9px;
+    padding:8px 12px;
+  }
+  .live-odds-info-title{
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    text-transform:uppercase;
+    letter-spacing:.1em;
+    color:var(--text-dim);
+    text-align:center;
+    margin-bottom:6px;
+  }
+  .live-odds-info-list{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    gap:6px 10px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:12.5px;
+  }
+  .live-odds-info-list .lo-item{
+    color:var(--text);
+    white-space:nowrap;
+  }
+  .live-odds-info-list .lo-cote{
+    color:var(--accent-2);
+    font-weight:700;
+  }
   .status-line{
     text-align:center;
     font-size:11px;
@@ -333,6 +365,7 @@
     <div class="tote-clock" id="countdown">--:--</div>
     <div class="tote-label" id="toteLabel"></div>
   </div>
+  <div class="live-odds-info" id="liveOddsInfo" style="display:none;"></div>
   <div class="snap-line" id="snapLine" style="display:none;">📸 Snapshot : en attente</div>
   <div class="status-line" id="statusLine"></div>
 
@@ -359,10 +392,12 @@
 // -----------------------------------------------------------------------
 const POLL_INTERVAL_MS = 700;   // rythme de rafraîchissement de l'affichage (le serveur, lui, interroge PMU toutes les 500ms)
 const FETCH_TIMEOUT_MS = 5000;
+const HORSE_NAME_MAX_CHARS = 8; // tronque l'affichage du nom pour garder le tableau lisible (nom complet dispo au survol)
 
 const courseInfoEl = document.getElementById('courseInfo');
 const countdownEl = document.getElementById('countdown');
 const snapLineEl = document.getElementById('snapLine');
+const liveOddsInfoEl = document.getElementById('liveOddsInfo');
 const statusLineEl = document.getElementById('statusLine');
 const toteLabelEl = document.getElementById('toteLabel');
 const rowsEl = document.getElementById('rows');
@@ -446,7 +481,9 @@ function renderTable(rows, tableMsg){
     }
 
     const nameTextEl = row.querySelector('.name-text');
-    if(nameTextEl.textContent !== nom) nameTextEl.textContent = nom;
+    const nomAffiche = nom.length > HORSE_NAME_MAX_CHARS ? nom.slice(0, HORSE_NAME_MAX_CHARS) : nom;
+    if(nameTextEl.textContent !== nomAffiche) nameTextEl.textContent = nomAffiche;
+    if(row.querySelector('.horse-name').title !== nom) row.querySelector('.horse-name').title = nom;
 
     // cote live : valeur mise en avant, avec flash haut/bas comme avant
     const coteEl = row.querySelector('.cote');
@@ -525,6 +562,21 @@ function renderTable(rows, tableMsg){
   });
 }
 
+function renderLiveOddsInfo(list){
+  if(!list || list.length === 0){
+    liveOddsInfoEl.style.display = 'none';
+    return;
+  }
+  const items = list.map(r=>{
+    const nom = (r.nom || `#${r.num}`);
+    const nomAffiche = nom.length > HORSE_NAME_MAX_CHARS ? nom.slice(0, HORSE_NAME_MAX_CHARS) : nom;
+    const cote = (r.coteLive === null || r.coteLive === undefined) ? '—' : r.coteLive.toFixed(1);
+    return `<span class="lo-item" title="${nom}">#${r.num} ${nomAffiche} <span class="lo-cote">${cote}</span></span>`;
+  }).join('');
+  liveOddsInfoEl.innerHTML = `<div class="live-odds-info-title">📊 Cotes live (ordre croissant) — avant T0</div><div class="live-odds-info-list">${items}</div>`;
+  liveOddsInfoEl.style.display = 'block';
+}
+
 function applyState(data){
   courseInfoEl.textContent = data.courseInfo || 'Chargement…';
   departTs = data.departTs;
@@ -534,6 +586,13 @@ function applyState(data){
     snapLineEl.textContent = data.snapLine;
   }
   snapLineEl.style.display = 'none';
+
+  // Bloc informatif "cotes live triees" : uniquement avant le snapshot a T0
+  // (avant que la cote de reference ne soit figee au depart). Purement
+  // informatif, disparait des que le depart est atteint.
+  const nowSecs = Date.now() / 1000;
+  const beforeSnapshot = data.departTs !== null && data.departTs !== undefined && nowSecs < data.departTs;
+  renderLiveOddsInfo(beforeSnapshot ? data.liveOddsSorted : null);
 
   if(data.statusLine){
     statusLineEl.textContent = data.statusLine;
