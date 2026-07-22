@@ -436,10 +436,13 @@ function buildRow(num){
   return row;
 }
 
-function renderTable(rows){
+function renderTable(rows, tableMsg){
   const emptyMsg = rowsEl.querySelector('.empty');
   if(!rows || rows.length === 0){
-    if(!emptyMsg) rowsEl.innerHTML = '<div class="empty">Aucun cheval avec une cote disponible pour le moment.</div>';
+    const msg = tableMsg || 'Aucun cheval avec une cote disponible pour le moment.';
+    if(!emptyMsg || emptyMsg.textContent !== msg){
+      rowsEl.innerHTML = `<div class="empty">${msg}</div>`;
+    }
     return;
   }
   if(emptyMsg) emptyMsg.remove();
@@ -562,7 +565,7 @@ function applyState(data){
     statusLineEl.textContent = '';
   }
 
-  renderTable(data.rows);
+  renderTable(data.rows, data.tableMsg);
 }
 
 async function pollState(){
