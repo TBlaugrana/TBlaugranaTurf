@@ -199,6 +199,7 @@ class Tracker:
 
         self.favoris_order = []   # ordre de suivi des chevaux (num en string)
         self.horse_names = {}
+        self.cote_t0 = {}         # num -> cote Gagnant (%) au moment du snapshot T0 (1ere cote vue pour ce cheval sur cette course)
         self.odds_history = {}    # num -> [(t, prob_lissee_ema), ...]
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
@@ -221,6 +222,7 @@ class Tracker:
                 "selected_nb_partants": self.selected_nb_partants,
                 "favoris_order": self.favoris_order,
                 "horse_names": self.horse_names,
+                "cote_t0": self.cote_t0,
                 "odds_history": self.odds_history,
                 "ema_prob": self.ema_prob,
                 "ema_last_t": self.ema_last_t,
@@ -264,6 +266,7 @@ class Tracker:
         self.selected_nb_partants = snap.get("selected_nb_partants")
         self.favoris_order = snap.get("favoris_order") or []
         self.horse_names = snap.get("horse_names") or {}
+        self.cote_t0 = snap.get("cote_t0") or {}
         self.odds_history = snap.get("odds_history") or {}
         self.ema_prob = snap.get("ema_prob") or {}
         self.ema_last_t = snap.get("ema_last_t") or {}
@@ -339,6 +342,7 @@ class Tracker:
     def start_tracking(self):
         self.favoris_order = []
         self.horse_names = {}
+        self.cote_t0 = {}
         self.odds_history = {}
         self.ema_prob = {}
         self.ema_last_t = {}
@@ -492,6 +496,11 @@ class Tracker:
             self.horse_names[num] = gagnant_map[num]["nom"]
             if num not in self.favoris_order:
                 self.favoris_order.append(num)
+            # Cote T0 = premiere cote Gagnant (%) observee pour ce cheval depuis
+            # le debut du suivi de cette course (snapshot de reference, fige
+            # une fois pour toutes, jamais recalcule ensuite).
+            if num not in self.cote_t0:
+                self.cote_t0[num] = gagnant_map[num]["ratio"]
 
         now = time.time()
         speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous
@@ -504,6 +513,12 @@ class Tracker:
         # pas reagir a du bruit tick-par-tick ; seule la cote affichee
         # ("coteG") reste la valeur brute instantanee du PMU.
         deltas = {}
+        # Ecart T0 -> Live : difference (en points de probabilite implicite, %)
+        # entre la cote au moment du snapshot (T0, figee au premier passage du
+        # cheval) et la cote actuelle. Positif = la cote du cheval a "chute"
+        # (il devient plus favori) ; negatif = sa cote "remonte" (il devient
+        # moins favori). C'est desormais le critere principal de tri/masquage.
+        ecarts = {}
         for num in self.favoris_order:
             g = gagnant_map.get(num)
             cote_g = g["ratio"] if g else None
@@ -514,20 +529,31 @@ class Tracker:
                 delta15 = (math.exp(math.log(ema_now) - math.log(ema_15)) - 1) * 100  # variation relative en %
             deltas[num] = (cote_g, ema_15, delta15)
 
-        def sort_key(n):
-            d = deltas[n][2]
-            return (d is None, -(d if d is not None else 0))
+            cote_t0 = self.cote_t0.get(num)
+            cote_live = cote_g
+            ecart = None
+            if cote_t0 is not None and cote_live is not None:
+                ecart = cote_live - cote_t0
+            ecarts[num] = (cote_t0, cote_live, ecart)
 
-        # Classement par plus forte progression de part de marche (Gagnant) sur
-        # les 15 dernieres secondes, decroissant ; seuls les GAINERS_TOP_N premiers
-        # restent visibles (les autres sont masques, pas supprimes, donc ils
-        # reapparaissent instantanement des qu'ils remontent dans le classement).
+        def sort_key(n):
+            e = ecarts[n][2]
+            return (e is None, -(e if e is not None else 0))
+
+        # Classement par plus grosse chute de cote (ecart T0 -> Live, decroissant) :
+        # le cheval dont la cote a le plus chute (donc devenu le plus favori
+        # depuis le snapshot T0) apparait en premier. Seuls les GAINERS_TOP_N
+        # premiers restent visibles (les autres sont masques, pas supprimes,
+        # donc ils reapparaissent instantanement des qu'ils remontent dans le
+        # classement) — et un cheval dont la cote "remonte" (ecart negatif,
+        # il devient moins favori) est TOUJOURS masque, quel que soit son rang.
         display_order = sorted(self.favoris_order, key=sort_key)
 
         rows = []
         for idx, num in enumerate(display_order):
             g = gagnant_map.get(num)
             cote_g, cote_g15, delta15 = deltas[num]
+            cote_t0, cote_live, ecart = ecarts[num]
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PCT_PER_MIN
 
@@ -570,11 +596,17 @@ class Tracker:
             # marque bigmove/valuebet (sous 5% ca reste sans chance reelle)
             is_longshot = cote_g is not None and cote_g < LONGSHOT_HIDE_THRESHOLD_PCT
 
+            # remonte = la cote du cheval "remonte" depuis T0 (ecart negatif,
+            # il devient moins favori) -> TOUJOURS masque, meme s'il est par
+            # ailleurs marque bigmove/valuebet (priorite absolue sur ce critere)
+            is_remonte = ecart is not None and ecart < 0
+
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
-                "coteG": cote_g,
-                "coteG15": cote_g15,
+                "coteT0": cote_t0,
+                "coteLive": cote_live,
+                "ecart": ecart,
                 "delta15": delta15,
                 "delta120": bigmove["delta"] if bigmove else None,
                 "isFavori": bool(g and g.get("favoris")),
@@ -584,9 +616,9 @@ class Tracker:
                 "speed": spd,
                 # un cheval marque definitivement (bigmove OU valuebet) reste
                 # visible tant qu'il n'est plus dans le top des plus fortes
-                # progressions sur 15s, MAIS un tocard (sous le seuil) reste
-                # masque meme s'il est bigmove/valuebet
-                "hidden": ((idx >= GAINERS_TOP_N) and not is_bigmove and not is_valuebet) or is_longshot,
+                # chutes de cote, MAIS un tocard (sous le seuil) ou un cheval
+                # dont la cote remonte restent masques dans tous les cas
+                "hidden": is_remonte or ((idx >= GAINERS_TOP_N) and not is_bigmove and not is_valuebet) or is_longshot,
             })
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
