@@ -204,7 +204,7 @@
   .table-wrap{ flex:1; }
   .table-head{
     display:grid;
-    grid-template-columns: 1fr 92px;
+    grid-template-columns: 1fr 78px;
     gap:6px;
     padding:0 12px 8px;
     font-size:12px;
@@ -223,7 +223,7 @@
   }
   .row{
     display:grid;
-    grid-template-columns: 1fr 92px;
+    grid-template-columns: 1fr 78px;
     gap:6px;
     align-items:center;
     background:var(--surface);
@@ -276,8 +276,6 @@
   .horse-sub .sub-label{ text-transform:uppercase; letter-spacing:.04em; font-size:9px; opacity:.75; }
   .horse-sub .sub-sep{ opacity:.5; }
   .late-badge{ flex:none; font-size:12px; margin-left:2px; }
-  .speed-badge{ flex:none; font-size:13px; margin-left:2px; }
-  .speed-badge.speed-up{ filter: drop-shadow(0 0 0 var(--success)); }
   .row-late{ border-style:dashed; }
   .cote{
     font-family:'JetBrains Mono',monospace;
@@ -296,19 +294,19 @@
   .cote-ecart{
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
-    font-size:22px;
+    font-size:16px;
     font-weight:700;
     text-align:center;
     color:var(--accent-2);
     display:flex;
     align-items:center;
     justify-content:center;
-    gap:4px;
+    gap:3px;
   }
   /* Paliers de couleur selon l'écart Gagnant - Placé : plus c'est haut, plus c'est marqué */
   .cote-ecart.ecart-t1{ color:#b8791f; }                 /* 3% <= écart < 5% : ambre */
-  .cote-ecart.ecart-t2{ color:#fff; background:var(--danger); border-radius:6px; padding:2px 6px; } /* écart >= 5% : rouge plein */
-  .ecart-target{ flex:none; font-size:13px; }
+  .cote-ecart.ecart-t2{ color:#fff; background:var(--danger); border-radius:6px; padding:2px 5px; } /* écart >= 5% : rouge plein */
+  .ecart-target{ flex:none; font-size:11px; }
   .fav-badge{ flex:none; font-size:12px; margin-left:2px; color:var(--accent-2); }
   .var{
     font-family:'JetBrains Mono',monospace;
@@ -773,7 +771,6 @@ function buildRow(num){
         <span class="horse-name"></span>
         <span class="horse-sub"><span class="cote"></span><span class="sub-sep">·</span><span class="cote-place"></span></span>
       </div>
-      <span class="speed-badge" style="display:none;"></span>
       <button class="hide-btn" title="Masquer ce cheval" aria-label="Masquer ce cheval">✕</button>
     </div>
     <div class="cote-ecart"><span class="ecart-value"></span><span class="ecart-target" style="display:none;">🎯</span></div>
@@ -882,35 +879,22 @@ function renderTable(gagnantMap, placeMap, speedMap){
     }
     ecartTargetEl.style.display = (ecart !== undefined && ecart >= ECART_TIER1) ? 'inline' : 'none';
 
-    // badge ⚡ : n'apparaît que si le mouvement récent (sur le Gagnant) dépasse le seuil de vitesse
-    const spd = speedMap ? speedMap[num] : undefined;
-    const isFast = spd !== undefined && Math.abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN;
-    const speedEl = row.querySelector('.speed-badge');
-    if(speedEl){
-      speedEl.style.display = isFast ? 'inline' : 'none';
-      if(isFast){
-        speedEl.textContent = '⚡';
-        speedEl.style.color = spd > 0 ? 'var(--danger)' : 'var(--success)';
-        speedEl.title = `Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} pts de probabilité/min (Gagnant)`;
-      }
-    }
+    // masque les chevaux dont l'écart est négatif (Placé > Gagnant) : seuls les chevaux
+    // à écart positif nous intéressent.
+    const ecartNegatif = ecart !== undefined && ecart < 0;
 
-    // masque les chevaux dont l'écart est positif (Gagnant > Placé) : seuls les chevaux
-    // à écart nul ou négatif nous intéressent.
-    const ecartPositif = ecart !== undefined && ecart > 0;
-
-    // ne montre que le top 5 du classement (par écart, hors chevaux à écart positif) ; un
+    // ne montre que le top 5 du classement (par écart, hors chevaux à écart négatif) ; un
     // cheval qui retombe hors du top 5 est simplement masqué (pas supprimé) donc il
     // réapparaît instantanément dès qu'il revient dans les 5 premiers au prochain
     // rafraîchissement. Un cheval masqué manuellement par l'utilisateur (hiddenHorses)
     // reste masqué même s'il fait partie du top 5, jusqu'à ce qu'il clique sur
     // "afficher les masqués".
     let dansTop5 = false;
-    if(!ecartPositif){
+    if(!ecartNegatif){
       dansTop5 = visibleRank < TOP_N;
       visibleRank++;
     }
-    row.classList.toggle('row-hidden', ecartPositif || !dansTop5 || hiddenHorses.has(num));
+    row.classList.toggle('row-hidden', ecartNegatif || !dansTop5 || hiddenHorses.has(num));
 
     // réordonne : appendChild déplace le nœud existant, il n'est jamais recréé
     rowsEl.appendChild(row);
