@@ -459,7 +459,7 @@ function renderTable(rows){
   const rangParNum = {};
   rows
     .filter(r => r.coteLive !== null && r.coteLive !== undefined)
-    .sort((a, b) => b.coteLive - a.coteLive)
+    .sort((a, b) => a.coteLive - b.coteLive)
     .forEach((r, i) => { rangParNum[r.num] = i + 1; });
 
   rows.forEach(r=>{
@@ -469,9 +469,9 @@ function renderTable(rows){
     const coteLive = (r.coteLive === null || r.coteLive === undefined) ? undefined : r.coteLive;
     const ecart = (r.ecart === null || r.ecart === undefined) ? undefined : r.ecart;
 
-    const coteT0Str = coteT0 !== undefined ? `${coteT0.toFixed(1)}%` : "—";
-    const coteLiveStr = coteLive !== undefined ? `${coteLive.toFixed(1)}%` : "—";
-    const ecartStr = ecart !== undefined ? `${ecart >= 0 ? '+' : ''}${ecart.toFixed(1)}%` : "—";
+    const coteT0Str = coteT0 !== undefined ? coteT0.toFixed(1) : "—";
+    const coteLiveStr = coteLive !== undefined ? coteLive.toFixed(1) : "—";
+    const ecartStr = ecart !== undefined ? `${ecart >= 0 ? '+' : ''}${ecart.toFixed(1)}` : "—";
 
     let row = rowEls[num];
     if(!row){
