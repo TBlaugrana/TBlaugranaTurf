@@ -358,7 +358,7 @@
   <div class="table-wrap">
     <div class="table-head">
       <span>Cheval</span>
-      <span>Cité G</span>
+      <span>Écart</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
   </div>
@@ -425,9 +425,9 @@ function buildRow(num){
       <div class="cote"></div>
     </div>
     <div class="row-bottom">
-      <span class="stat"><span class="lbl">Δ</span><span class="var flat">—</span></span>
+      <span class="stat"><span class="lbl">T0</span><span class="var flat">—</span></span>
       <span class="stat-dot"></span>
-      <span class="stat"><span class="lbl">Vit.</span><span class="vitesse flat">—</span></span>
+      <span class="stat"><span class="lbl">Live</span><span class="vitesse flat">—</span></span>
     </div>
   `;
   row.querySelector('.num-badge').textContent = num;
@@ -458,18 +458,20 @@ function renderTable(rows){
   // pas de rang.
   const rangParNum = {};
   rows
-    .filter(r => r.coteG !== null && r.coteG !== undefined)
-    .sort((a, b) => b.coteG - a.coteG)
+    .filter(r => r.coteLive !== null && r.coteLive !== undefined)
+    .sort((a, b) => b.coteLive - a.coteLive)
     .forEach((r, i) => { rangParNum[r.num] = i + 1; });
 
   rows.forEach(r=>{
     const num = r.num;
     const nom = r.nom || `#${num}`;
-    const coteG = (r.coteG === null || r.coteG === undefined) ? undefined : r.coteG;
-    const delta15 = (r.delta15 === null || r.delta15 === undefined) ? undefined : r.delta15;
+    const coteT0 = (r.coteT0 === null || r.coteT0 === undefined) ? undefined : r.coteT0;
+    const coteLive = (r.coteLive === null || r.coteLive === undefined) ? undefined : r.coteLive;
+    const ecart = (r.ecart === null || r.ecart === undefined) ? undefined : r.ecart;
 
-    const coteGStr = coteG !== undefined ? `${coteG.toFixed(1)}%` : "—";
-    const delta15Str = delta15 !== undefined ? `${delta15 >= 0 ? '+' : ''}${delta15.toFixed(1)}%` : "—";
+    const coteT0Str = coteT0 !== undefined ? `${coteT0.toFixed(1)}%` : "—";
+    const coteLiveStr = coteLive !== undefined ? `${coteLive.toFixed(1)}%` : "—";
+    const ecartStr = ecart !== undefined ? `${ecart >= 0 ? '+' : ''}${ecart.toFixed(1)}%` : "—";
 
     let row = rowEls[num];
     if(!row){
@@ -486,41 +488,41 @@ function renderTable(rows){
     if(rangEl.textContent !== rangStr) rangEl.textContent = rangStr;
 
     const coteEl = row.querySelector('.cote');
-    if(coteEl.textContent !== coteGStr){
-      coteEl.textContent = coteGStr;
-      const prevC = lastGagnant[num];
-      if(prevC !== undefined && coteG !== undefined && coteG !== prevC){
+    if(coteEl.textContent !== ecartStr){
+      coteEl.textContent = ecartStr;
+      const prevE = lastGagnant[num];
+      if(prevE !== undefined && ecart !== undefined && ecart !== prevE){
         row.classList.remove('flash-up','flash-down');
         void row.offsetWidth;
-        row.classList.add(coteG < prevC ? 'flash-up' : 'flash-down');
+        // ecart qui augmente = cote qui chute encore plus (favorable)
+        row.classList.add(ecart > prevE ? 'flash-up' : 'flash-down');
         clearTimeout(row._flashTimer);
         row._flashTimer = setTimeout(()=>row.classList.remove('flash-up','flash-down'), 500);
       }
     }
-    if(coteG !== undefined) lastGagnant[num] = coteG;
+    if(ecart !== undefined) lastGagnant[num] = ecart;
+    coteEl.title = "Écart entre la cote au moment du snapshot (T0) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le début du suivi";
 
+    // Cote T0 : valeur de référence figée, affichage neutre (ne "flashe" pas)
     const deltaEl = row.querySelector('.var');
-    if(deltaEl.textContent !== delta15Str) deltaEl.textContent = delta15Str;
+    if(deltaEl.textContent !== coteT0Str) deltaEl.textContent = coteT0Str;
     deltaEl.classList.remove('up','down','flat');
-    if(delta15 === undefined) deltaEl.classList.add('flat');
-    else if(delta15 > 0) deltaEl.classList.add('up');
-    else if(delta15 < 0) deltaEl.classList.add('down');
-    else deltaEl.classList.add('flat');
+    deltaEl.classList.add('flat');
+    deltaEl.title = "Cote Gagnant au moment du snapshot (T0)";
 
     const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
     const isFast = !!r.isFast;
     const vitesseEl = row.querySelector('.vitesse');
     if(vitesseEl){
-      const vitesseStr = spd !== undefined ? `${spd >= 0 ? '+' : ''}${spd.toFixed(1)}%` : "—";
-      if(vitesseEl.textContent !== vitesseStr) vitesseEl.textContent = vitesseStr;
+      if(vitesseEl.textContent !== coteLiveStr) vitesseEl.textContent = coteLiveStr;
       vitesseEl.classList.remove('up','down','flat');
-      if(spd === undefined) vitesseEl.classList.add('flat');
-      else if(spd > 0) vitesseEl.classList.add('up');
-      else if(spd < 0) vitesseEl.classList.add('down');
+      if(ecart === undefined) vitesseEl.classList.add('flat');
+      else if(ecart > 0) vitesseEl.classList.add('up');
+      else if(ecart < 0) vitesseEl.classList.add('down');
       else vitesseEl.classList.add('flat');
       vitesseEl.title = isFast
-        ? `⚡ Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} %/min (variation relative de la probabilité implicite lissée, fenêtre ≤45s)`
-        : `Vitesse de variation relative : ${spd !== undefined ? (spd >= 0 ? '+' : '') + spd.toFixed(1) : '—'} %/min (probabilité implicite lissée, fenêtre ≤45s)`;
+        ? `Cote Gagnant en live — ⚡ mouvement rapide (${spd !== undefined ? (spd >= 0 ? '+' : '') + spd.toFixed(1) : '—'} %/min)`
+        : "Cote Gagnant en live (probabilité implicite actuelle)";
     }
 
     // Signal "VALUEBET" : marquage DÉFINITIF calculé côté serveur (comme le
