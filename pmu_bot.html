@@ -284,7 +284,15 @@
     font-weight:700;
     text-align:center;
     color:var(--accent-2);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:4px;
   }
+  /* Paliers de couleur selon l'écart Gagnant - Placé : plus c'est haut, plus c'est marqué */
+  .cote-ecart.ecart-t1{ color:#b8791f; }                 /* 3% <= écart < 5% : ambre */
+  .cote-ecart.ecart-t2{ color:#fff; background:var(--danger); border-radius:6px; padding:2px 6px; } /* écart >= 5% : rouge plein */
+  .ecart-target{ flex:none; font-size:13px; }
   .fav-badge{ flex:none; font-size:12px; margin-left:2px; color:var(--accent-2); }
   .var{
     font-family:'JetBrains Mono',monospace;
@@ -307,6 +315,32 @@
     font-size:13px;
     padding:30px 10px;
   }
+
+  .hide-btn{
+    flex:none;
+    width:20px; height:20px;
+    padding:0;
+    margin-left:auto;
+    border:none;
+    background:transparent;
+    color:var(--text-dim);
+    font-size:13px;
+    line-height:1;
+    border-radius:5px;
+    opacity:.45;
+    transition:opacity .15s ease, background .15s ease, color .15s ease;
+  }
+  .hide-btn:hover{ opacity:1; background:var(--danger-bg); color:var(--danger); }
+  .hidden-link{
+    text-align:center;
+    font-size:12px;
+    color:var(--text-dim);
+    margin-top:8px;
+    cursor:pointer;
+    text-decoration:underline;
+    text-underline-offset:2px;
+  }
+  .hidden-link:hover{ color:var(--text); }
 </style>
 </head>
 <body>
@@ -333,21 +367,37 @@
       <span>Cheval</span><span>Gagnant</span><span>Placé</span><span>Écart</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
+    <div class="hidden-link" id="hiddenLink" style="display:none;"></div>
   </div>
 
 </div>
 
 <script>
-// -----------------------------------------------------------------------
-// Client "léger" : tout le suivi (programme, cotes, historique, vitesse,
-// top 5) est calculé côté serveur (server.py), en continu, indépendamment
-// du fait qu'un onglet soit ouvert ou non. Cette page se contente d'interroger
-// périodiquement /api/state et d'afficher ce que le serveur renvoie.
-// -> Fermer l'onglet ne fait donc plus perdre aucune donnée : au retour,
-//    le serveur renvoie l'état à jour (course en cours, cotes, historique).
-// -----------------------------------------------------------------------
-const POLL_INTERVAL_MS = 700;   // rythme de rafraîchissement de l'affichage (le serveur, lui, interroge PMU toutes les 500ms)
-const FETCH_TIMEOUT_MS = 5000;
+const PMU_BASE_PROG = "/proxy/61";
+const PMU_BASE_CITATIONS = "/proxy/citations";
+const REFRESH_INTERVAL_MS = 500;      // délai minimal entre deux cycles de poll (2 requêtes/cycle : SG + SP)
+const FETCH_TIMEOUT_MS = 4000;        // abandonne un cycle trop lent au lieu d'attendre
+const SPEED_WINDOW_MS = 45000;             // fenêtre glissante utilisée pour calculer la vitesse de mouvement (sur le Gagnant)
+const SPEED_THRESHOLD_PTS_PER_MIN = 6;     // seuil (points de probabilité implicite / min) au-delà duquel on affiche le badge ⚡
+const ECART_TIER1 = 3;                     // écart (%) à partir duquel la cellule Écart passe en ambre + badge 🎯
+const ECART_TIER2 = 5;                     // écart (%) à partir duquel la cellule Écart passe en rouge plein
+const REPROG_INTERVAL_MS = 45000;          // recharge le programme en tâche de fond toutes les 45s (detecte retards / courses terminées)
+const DEPART_CHANGE_THRESHOLD_S = 15;      // écart d'heure de départ (en secondes) à partir duquel on considère que la course a été retardée/avancée
+const RACE_STALE_MS = 5 * 60 * 1000;       // bascule vers la course suivante dès que la course suivie est partie depuis plus de 5 min
+
+const today = new Date();
+
+function datePmu(d){
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  return `${dd}${mm}${yyyy}`;
+}
+
+function isAnnulee(obj){
+  const s = (obj.statut || obj.statutCourse || obj.statutReunion || "");
+  return typeof s === "string" && s.toUpperCase().includes("ANNULE");
+}
 
 const courseInfoEl = document.getElementById('courseInfo');
 const countdownEl = document.getElementById('countdown');
@@ -356,32 +406,323 @@ const statusLineEl = document.getElementById('statusLine');
 const toteLabelEl = document.getElementById('toteLabel');
 const rowsEl = document.getElementById('rows');
 
-let rowEls = {};        // num -> élément DOM de la ligne (réutilisé d'un cycle à l'autre)
-let lastGagnant = {};   // num -> dernière cote Gagnant affichée (pour détecter les variations et flasher)
-let lastPlace = {};     // num -> dernière cote Placé affichée
+let allCourses = [];
+let selectedReunion = null;
+let selectedCourse = null;
 let departTs = null;
-let pollTimer = null;
+let selectedDiscipline = '';
+let selectedNbPartants = null;
 
-function fmtCountdown(secs){
-  if(secs >= 0){
-    const h = Math.floor(secs/3600);
-    const m = Math.floor((secs%3600)/60);
-    const s = secs%60;
-    if(h > 0) return `${h}h${String(m).padStart(2,'0')}`;
-    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+let favorisOrder = [];   // ordre de suivi des chevaux (num en string)
+let horseNames = {};
+let rowEls = {};          // num -> élément DOM de la ligne (réutilisé d'un cycle à l'autre)
+let lastGagnant = {};     // num -> dernière cote Gagnant affichée (pour détecter les variations et flasher)
+let lastPlace = {};       // num -> dernière cote Placé affichée
+let oddsHistory = {};     // num -> [{t, prob}] historique glissant (probabilité implicite Gagnant) pour calculer la vitesse
+let hiddenHorses = new Set(); // num (string) -> masqués manuellement par l'utilisateur, en mémoire uniquement (reset à chaque nouvelle course)
+
+const hiddenLinkEl = document.getElementById('hiddenLink');
+
+function updateHiddenLink(){
+  const n = hiddenHorses.size;
+  if(n === 0){
+    hiddenLinkEl.style.display = 'none';
+    hiddenLinkEl.textContent = '';
   } else {
-    const elapsed = Math.abs(secs);
-    const m = Math.floor(elapsed/60);
-    const s = elapsed%60;
-    return `Partie ${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    hiddenLinkEl.style.display = '';
+    hiddenLinkEl.textContent = `👁 afficher ${n} cheval${n>1?'aux':''} masqué${n>1?'s':''}`;
   }
 }
 
-function tickCountdown(){
-  if(departTs !== null){
-    const secs = Math.floor(departTs - (Date.now()/1000));
-    countdownEl.textContent = fmtCountdown(secs);
+hiddenLinkEl.addEventListener('click', ()=>{
+  hiddenHorses.clear();
+  for(const num in rowEls){
+    rowEls[num].classList.remove('row-hidden');
   }
+  updateHiddenLink();
+});
+
+let pollTimeoutId = null;
+let pollAbort = null;
+let polling = false;
+let reprogTimer = null;
+
+function parseProgramme(data){
+  const reunionsRaw = (data.programme && data.programme.reunions) || [];
+  const courses = [];
+  for(const ru of reunionsRaw){
+    if(isAnnulee(ru)) continue;
+    const hip = (ru.hippodrome && (ru.hippodrome.libelleCourt || ru.hippodrome.libelleLong)) || `R${ru.numOfficiel}`;
+    const numReunion = ru.numOfficiel;
+    for(const co of (ru.courses || [])){
+      if(isAnnulee(co)) continue;
+      courses.push({
+        numReunion,
+        hip,
+        course: co.numOrdre,
+        depart: co.heureDepart,
+        libelle: co.libelle || co.libelleCourt || `Course ${co.numOrdre}`,
+        discipline: co.discipline || '',
+        nbPartants: co.nombreDeclaresPartants ?? co.participants ?? null
+      });
+    }
+  }
+  courses.sort((a,b)=> (a.depart||0) - (b.depart||0));
+  return courses;
+}
+
+async function loadProgramme(){
+  statusLineEl.textContent = "Chargement du programme…";
+  statusLineEl.style.color = "var(--text-dim)";
+  try{
+    const url = `${PMU_BASE_PROG}/programme/${datePmu(today)}?specialisation=OFFLINE`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    allCourses = parseProgramme(data);
+    statusLineEl.textContent = `Programme chargé (${allCourses.length} courses)`;
+    selectNextCourse();
+  }catch(e){
+    statusLineEl.textContent = `Erreur programme : ${e.message}`;
+    statusLineEl.style.color = "var(--danger)";
+  }finally{
+    scheduleReprog();
+  }
+}
+
+function scheduleReprog(){
+  if(reprogTimer) clearTimeout(reprogTimer);
+  reprogTimer = setTimeout(refreshProgrammeBackground, REPROG_INTERVAL_MS);
+}
+
+// Recharge le programme en tâche de fond, sans jamais interrompre le suivi en cours,
+// pour détecter : un départ retardé/avancé sur la course suivie, ou sa disparition du
+// programme (course terminée) afin d'enchaîner automatiquement sur la suivante.
+async function refreshProgrammeBackground(){
+  try{
+    const url = `${PMU_BASE_PROG}/programme/${datePmu(today)}?specialisation=OFFLINE`;
+    const res = await fetch(url, { cache: "no-store" });
+    if(res.ok){
+      const data = await res.json();
+      allCourses = parseProgramme(data);
+      handleProgrammeRefresh();
+    }
+  }catch(e){
+    // silencieux : simple échec de fond, on retente au prochain cycle
+  }finally{
+    scheduleReprog();
+  }
+}
+
+function handleProgrammeRefresh(){
+  const now = Date.now();
+
+  if(selectedReunion === null || selectedCourse === null){
+    selectNextCourse();
+    return;
+  }
+
+  // Bascule vers la course suivante dès que la course suivie est partie depuis plus de
+  // RACE_STALE_MS (5 min) — qu'elle soit encore présente au programme ou non.
+  if(departTs !== null && (now - departTs * 1000) > RACE_STALE_MS){
+    selectNextCourse();
+    return;
+  }
+
+  const current = allCourses.find(c => c.numReunion === selectedReunion && c.course === selectedCourse);
+
+  if(current){
+    const newDepartTs = current.depart / 1000.0;
+    selectedDiscipline = current.discipline;
+    selectedNbPartants = current.nbPartants;
+
+    if(departTs !== null && Math.abs(newDepartTs - departTs) > DEPART_CHANGE_THRESHOLD_S){
+      const wasDelayed = newDepartTs > departTs;
+      departTs = newDepartTs;
+      courseInfoEl.textContent = formatCourseLabel(current);
+      updateToteLabel();
+      if(wasDelayed){
+        snapLineEl.textContent = "⏱ Départ retardé — suivi maintenu…";
+      }
+    } else {
+      courseInfoEl.textContent = formatCourseLabel(current);
+      updateToteLabel();
+    }
+    return;
+  }
+
+  // La course suivie a disparu du programme mais n'est pas encore partie depuis 5 min :
+  // on continue simplement de la suivre (le contrôle ci-dessus prendra le relais dès que
+  // le délai de 5 min sera écoulé).
+}
+
+function formatCourseLabel(c){
+  let hhmm = "";
+  if(c.depart){
+    const dt = new Date(c.depart);
+    hhmm = dt.toTimeString().slice(0,5);
+  }
+  return `${hhmm} — R${c.numReunion}C${c.course} — ${c.hip} — ${c.libelle}`;
+}
+
+function selectNextCourse(){
+  // Choisit automatiquement la prochaine course à venir (la plus proche de son départ),
+  // et lance directement le suivi dessus — sans aucune action de l'utilisateur.
+  const now = Date.now();
+  const upcoming = allCourses.filter(c => c.depart && c.depart >= now);
+  const chosen = upcoming.length ? upcoming[0] : (allCourses.length ? allCourses[allCourses.length - 1] : null);
+
+  if(!chosen){
+    courseInfoEl.textContent = "Aucune course disponible.";
+    statusLineEl.textContent = "Aucune course disponible pour le moment.";
+    statusLineEl.style.color = "var(--danger)";
+    return;
+  }
+
+  selectedReunion = chosen.numReunion;
+  selectedCourse = chosen.course;
+  departTs = chosen.depart / 1000.0;
+  selectedDiscipline = chosen.discipline;
+  selectedNbPartants = chosen.nbPartants;
+  courseInfoEl.textContent = formatCourseLabel(chosen);
+  updateToteLabel();
+  startTracking();
+}
+
+function updateToteLabel(nbLive){
+  const parts = [];
+  if(selectedDiscipline) parts.push(selectedDiscipline);
+  const nb = (nbLive !== undefined && nbLive !== null) ? nbLive : selectedNbPartants;
+  if(nb !== null && nb !== undefined) parts.push(`${nb} partant${nb>1?'s':''}`);
+  toteLabelEl.textContent = parts.join(' · ');
+}
+
+function startTracking(){
+  if(selectedReunion === null || selectedCourse === null) return;
+  favorisOrder = [];
+  horseNames = {};
+  rowEls = {};
+  lastGagnant = {};
+  lastPlace = {};
+  oddsHistory = {};
+  hiddenHorses.clear();
+  updateHiddenLink();
+  rowsEl.innerHTML = "";
+  snapLineEl.style.display = "";
+  snapLineEl.textContent = "📡 Rapports probables : en attente";
+
+  if(pollTimeoutId) clearTimeout(pollTimeoutId);
+  if(pollAbort) pollAbort.abort();
+  polling = true;
+  pollOnce();
+}
+
+function stopTracking(){
+  polling = false;
+  if(pollTimeoutId) clearTimeout(pollTimeoutId);
+  if(pollAbort) pollAbort.abort();
+}
+
+// Extrait, depuis UNE réponse /citations (qui contient en réalité les deux pools
+// SIMPLE_GAGNANT et SIMPLE_PLACE quel que soit le paramètre "paris" demandé),
+// les maps numPmu -> {nom, ratio, favoris} pour chacun des deux types de pari.
+function parseCitations(data){
+  const gagnantMap = {};
+  const placeMap = {};
+  const groupes = (data && data.listeCitations) || [];
+  for(const g of groupes){
+    const target = g.typePari === "SIMPLE_PLACE" ? placeMap
+                 : g.typePari === "SIMPLE_GAGNANT" ? gagnantMap
+                 : null;
+    if(!target) continue;
+    for(const p of (g.participants || [])){
+      if(p.statut !== "PARTANT") continue;
+      const cits = p.citations || [];
+      const ratio = cits.length ? cits[0].ratio : undefined;
+      if(ratio === undefined || ratio === null) continue;
+      target[p.numPmu] = { nom: p.nom || `#${p.numPmu}`, ratio, favoris: !!p.favoris };
+    }
+  }
+  return { gagnantMap, placeMap };
+}
+
+async function pollOnce(){
+  if(!polling) return;
+  const controller = new AbortController();
+  pollAbort = controller;
+  const killer = setTimeout(()=>controller.abort(), FETCH_TIMEOUT_MS);
+  const startedAt = performance.now();
+  try{
+    // Un seul appel : la réponse contient déjà les pools SIMPLE_GAGNANT et SIMPLE_PLACE
+    // ensemble (le paramètre "paris" ne filtre pas le résultat côté PMU), inutile
+    // d'interroger deux fois — cela évite aussi un éventuel 404 sur une requête en double.
+    const url = `${PMU_BASE_CITATIONS}/programme/${datePmu(today)}/R${selectedReunion}/C${selectedCourse}/citations?paris=SIMPLE_GAGNANT&specialisation=OFFLINE&groupe=true`;
+    const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    statusLineEl.textContent = "";
+    handleOdds(data);
+  }catch(e){
+    if(e.name !== "AbortError"){
+      statusLineEl.textContent = `Erreur cotes : ${e.message}`;
+      statusLineEl.style.color = "var(--danger)";
+    }
+  }finally{
+    clearTimeout(killer);
+    if(polling){
+      // planifie le prochain cycle dès que possible, en respectant l'intervalle minimal
+      // (jamais deux cycles en vol en même temps -> pas d'empilement en cas de lenteur réseau)
+      const elapsed = performance.now() - startedAt;
+      const wait = Math.max(0, REFRESH_INTERVAL_MS - elapsed);
+      pollTimeoutId = setTimeout(pollOnce, wait);
+    }
+  }
+}
+
+function handleOdds(data){
+  const { gagnantMap, placeMap } = parseCitations(data);
+
+  const nums = new Set([...Object.keys(gagnantMap), ...Object.keys(placeMap)]);
+  if(nums.size === 0) return;
+  updateToteLabel(nums.size);
+
+  for(const num of nums){
+    const nom = (gagnantMap[num] && gagnantMap[num].nom) || (placeMap[num] && placeMap[num].nom) || `#${num}`;
+    horseNames[num] = nom;
+    if(!favorisOrder.includes(num)) favorisOrder.push(num);
+  }
+
+  const speedMap = updateSpeedHistory(gagnantMap);
+
+  const now = new Date();
+  snapLineEl.textContent = `📡 Rapports probables mis à jour — ${now.toTimeString().slice(0,8)}`;
+
+  renderTable(gagnantMap, placeMap, speedMap);
+}
+
+// Calcule, pour chaque cheval, la vitesse de variation de sa probabilité implicite Gagnant
+// (en points de probabilité par minute) sur une fenêtre glissante récente.
+// Utile pour repérer les mouvements brusques ("steam moves").
+function updateSpeedHistory(gagnantMap){
+  const now = Date.now();
+  const speed = {};
+  for(const [num, info] of Object.entries(gagnantMap)){
+    const cote = info.ratio;
+    if(!cote || cote <= 0) continue;
+    const prob = 100 / cote;
+    if(!oddsHistory[num]) oddsHistory[num] = [];
+    const hist = oddsHistory[num];
+    hist.push({ t: now, prob });
+    while(hist.length > 1 && now - hist[0].t > SPEED_WINDOW_MS) hist.shift();
+    if(hist.length >= 2){
+      const first = hist[0];
+      const minutes = (now - first.t) / 60000;
+      if(minutes > 0){
+        speed[num] = (prob - first.prob) / minutes;
+      }
+    }
+  }
+  return speed;
 }
 
 function buildRow(num){
@@ -389,39 +730,72 @@ function buildRow(num){
   row.className = 'row';
   row.dataset.num = num;
   row.innerHTML = `
-    <div class="horse"><span class="num-badge"></span><span class="horse-name"></span><span class="speed-badge" style="display:none;"></span></div>
+    <div class="horse"><span class="num-badge"></span><span class="horse-name"></span><span class="speed-badge" style="display:none;"></span><button class="hide-btn" title="Masquer ce cheval" aria-label="Masquer ce cheval">✕</button></div>
     <div class="cote"></div>
     <div class="cote-place"></div>
-    <div class="cote-ecart"></div>
+    <div class="cote-ecart"><span class="ecart-value"></span><span class="ecart-target" style="display:none;">🎯</span></div>
   `;
   row.querySelector('.num-badge').textContent = num;
+  row.querySelector('.hide-btn').addEventListener('click', ()=>{
+    hiddenHorses.add(num);
+    row.classList.add('row-hidden');
+    updateHiddenLink();
+  });
   return row;
 }
 
-function renderTable(rows){
+// Écart entre la valeur Gagnant et la valeur Placé (différence signée : Gagnant - Placé)
+function computeEcart(coteG, coteP){
+  if(coteG === undefined || coteG === null || coteP === undefined || coteP === null) return undefined;
+  return coteG - coteP;
+}
+
+function renderTable(gagnantMap, placeMap, speedMap){
   const emptyMsg = rowsEl.querySelector('.empty');
-  if(!rows || rows.length === 0){
+  if(favorisOrder.length === 0){
     if(!emptyMsg) rowsEl.innerHTML = '<div class="empty">Aucun cheval avec une cote disponible pour le moment.</div>';
     return;
   }
   if(emptyMsg) emptyMsg.remove();
 
+  // mémorise les positions actuelles (avant réordonnancement) pour l'animation FLIP
   const prevRects = {};
   for(const num in rowEls){
     prevRects[num] = rowEls[num].getBoundingClientRect();
   }
 
-  rows.forEach(r=>{
-    const num = r.num;
-    const nom = r.nom || `#${num}`;
-    const coteG = (r.coteG === null || r.coteG === undefined) ? undefined : r.coteG;
-    const coteP = (r.coteP === null || r.coteP === undefined) ? undefined : r.coteP;
-    const ecart = (r.ecart === null || r.ecart === undefined) ? undefined : r.ecart;
+  // Trie par écart (Gagnant % - Placé %) décroissant : les chevaux avec le plus grand
+  // écart entre leur probabilité Gagnant et leur probabilité Placé en tête. Les chevaux
+  // pour lesquels l'écart ne peut pas être calculé (cote manquante d'un côté) sont
+  // relégués en fin de liste.
+  const displayOrder = [...favorisOrder].sort((a,b)=>{
+    const ea = computeEcart(gagnantMap[a] && gagnantMap[a].ratio, placeMap[a] && placeMap[a].ratio);
+    const eb = computeEcart(gagnantMap[b] && gagnantMap[b].ratio, placeMap[b] && placeMap[b].ratio);
+    if(ea === undefined && eb === undefined) return 0;
+    if(ea === undefined) return 1;
+    if(eb === undefined) return -1;
+    return eb - ea;
+  });
+
+  const TOP_N = 5;
+
+  displayOrder.forEach((num, idx)=>{
+    const nom = horseNames[num] || `#${num}`;
+    const gInfo = gagnantMap[num];
+    const pInfo = placeMap[num];
+    const coteG = gInfo ? gInfo.ratio : undefined;
+    const coteP = pInfo ? pInfo.ratio : undefined;
+    const isFavori = !!(gInfo && gInfo.favoris);
+
+    const ecart = computeEcart(coteG, coteP);
 
     const coteGStr = coteG !== undefined ? `${coteG.toFixed(2)}%` : "—";
     const cotePStr = coteP !== undefined ? `${coteP.toFixed(2)}%` : "—";
     const ecartStr = ecart !== undefined ? `${ecart >= 0 ? '+' : ''}${ecart.toFixed(2)}%` : "—";
 
+    // tous les chevaux sont affichés (plus de masquage au-delà d'un seuil de cote)
+
+    // réutilise l'élément DOM existant plutôt que d'en recréer un (évite le reflow complet)
     let row = rowEls[num];
     if(!row){
       row = buildRow(num);
@@ -431,13 +805,13 @@ function renderTable(rows){
     const nameEl = row.querySelector('.horse-name');
     if(nameEl.textContent !== nom) nameEl.textContent = nom;
 
-    if(r.isFavori && !row.querySelector('.fav-badge')){
+    if(isFavori && !row.querySelector('.fav-badge')){
       const badge = document.createElement('span');
       badge.className = 'fav-badge';
       badge.title = 'Favori des rapports probables';
       badge.textContent = '★';
       row.querySelector('.horse').appendChild(badge);
-    } else if(!r.isFavori){
+    } else if(!isFavori){
       const existing = row.querySelector('.fav-badge');
       if(existing) existing.remove();
     }
@@ -445,10 +819,11 @@ function renderTable(rows){
     const coteEl = row.querySelector('.cote');
     if(coteEl.textContent !== coteGStr){
       coteEl.textContent = coteGStr;
+      // flash bref de la ligne quand la cote Gagnant bouge (cote qui baisse = favori qui se renforce)
       const prevC = lastGagnant[num];
       if(prevC !== undefined && coteG !== undefined && coteG !== prevC){
         row.classList.remove('flash-up','flash-down');
-        void row.offsetWidth;
+        void row.offsetWidth; // relance l'animation CSS
         row.classList.add(coteG < prevC ? 'flash-up' : 'flash-down');
         clearTimeout(row._flashTimer);
         row._flashTimer = setTimeout(()=>row.classList.remove('flash-up','flash-down'), 500);
@@ -456,101 +831,4 @@ function renderTable(rows){
     }
     if(coteG !== undefined) lastGagnant[num] = coteG;
 
-    const cotePEl = row.querySelector('.cote-place');
-    if(cotePEl.textContent !== cotePStr) cotePEl.textContent = cotePStr;
-    if(coteP !== undefined) lastPlace[num] = coteP;
-
-    const ecartEl = row.querySelector('.cote-ecart');
-    if(ecartEl.textContent !== ecartStr) ecartEl.textContent = ecartStr;
-
-    const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
-    const isFast = !!r.isFast;
-    const speedEl = row.querySelector('.speed-badge');
-    if(speedEl){
-      speedEl.style.display = isFast ? 'inline' : 'none';
-      if(isFast && spd !== undefined){
-        speedEl.textContent = '⚡';
-        speedEl.style.color = spd > 0 ? 'var(--danger)' : 'var(--success)';
-        speedEl.title = `Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} pts de probabilité/min (Gagnant)`;
-      }
-    }
-
-    // ne montre que le top 5 du classement (par écart) ; un cheval qui retombe hors du
-    // top 5 est simplement masqué (pas supprimé) donc il réapparaît instantanément dès
-    // qu'il revient dans les 5 premiers — calcul fait côté serveur, en continu
-    row.classList.toggle('row-hidden', !!r.hidden);
-
-    rowsEl.appendChild(row);
-  });
-
-  const presentNums = new Set(rows.map(r=>r.num));
-  for(const num in rowEls){
-    if(!presentNums.has(num)){
-      rowEls[num].remove();
-      delete rowEls[num];
-    }
-  }
-
-  rowsEl.querySelectorAll('.row:not(.row-hidden)').forEach(el=>{
-    const prev = prevRects[el.dataset.num];
-    if(prev){
-      const next = el.getBoundingClientRect();
-      const dy = prev.top - next.top;
-      if(dy !== 0){
-        el.style.transition = "none";
-        el.style.transform = `translateY(${dy}px)`;
-        requestAnimationFrame(()=>{
-          el.style.transition = "transform .35s ease, background-color .4s ease";
-          el.style.transform = "translateY(0)";
-        });
-      }
-    }
-  });
-}
-
-function applyState(data){
-  courseInfoEl.textContent = data.courseInfo || 'Chargement…';
-  departTs = data.departTs;
-  toteLabelEl.textContent = data.toteLabel || '';
-
-  if(data.snapLine){
-    snapLineEl.style.display = '';
-    snapLineEl.textContent = data.snapLine;
-  } else {
-    snapLineEl.style.display = 'none';
-  }
-
-  if(data.statusLine){
-    statusLineEl.textContent = data.statusLine;
-    statusLineEl.style.color = data.statusLine.startsWith('Erreur') ? 'var(--danger)' : 'var(--text-dim)';
-  } else {
-    statusLineEl.textContent = '';
-  }
-
-  renderTable(data.rows);
-}
-
-async function pollState(){
-  const controller = new AbortController();
-  const killer = setTimeout(()=>controller.abort(), FETCH_TIMEOUT_MS);
-  try{
-    const res = await fetch('/api/state', { signal: controller.signal, cache: "no-store" });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    applyState(data);
-  }catch(e){
-    if(e.name !== "AbortError"){
-      statusLineEl.textContent = `Connexion au serveur perdue, nouvelle tentative… (${e.message})`;
-      statusLineEl.style.color = "var(--danger)";
-    }
-  }finally{
-    clearTimeout(killer);
-    pollTimer = setTimeout(pollState, POLL_INTERVAL_MS);
-  }
-}
-
-setInterval(tickCountdown, 500);
-pollState();
-</script>
-</body>
-</html>
+    const cotePEl = row.querySelector('.cote-place'
