@@ -52,11 +52,13 @@ RACE_STALE_S = 6 * 60           # bascule vers la course suivante 6 min apres so
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
-# En dessous de ce seuil de cote Gagnant (probabilite implicite, en %), un
-# cheval est considere comme un "tocard" sans chance reelle et masque du
-# tableau — y compris s'il est marque "bigmove" (une progression forte ne
-# suffit pas a le rendre interessant s'il reste sous ce niveau).
-LONGSHOT_HIDE_THRESHOLD_PCT = 6.0
+# Au-dessus de ce seuil de cote Gagnant (cote DECIMALE, endpoint /participants,
+# ex: 16.7 = "16,7 contre 1"), un cheval est considere comme un "tocard" sans
+# chance reelle et masque du tableau — y compris s'il est marque "bigmove"
+# (une progression forte ne suffit pas a le rendre interessant s'il reste
+# au-dessus de ce niveau). Equivalent a l'ancien seuil de 6% de probabilite
+# implicite (1 / 0.06 ≈ 16.7) utilise avant le passage a l'endpoint /participants.
+LONGSHOT_HIDE_THRESHOLD_DECIMAL = 16.7
 
 # Lissage exponentiel (EMA) applique a la probabilite implicite (Gagnant) avant
 # tout calcul de delta/vitesse, pour filtrer le bruit tick-par-tick (la cote
@@ -387,23 +389,36 @@ class Tracker:
         # sinon : la course a disparu du programme mais n'est pas encore consideree "stale" -> on continue de la suivre
 
     # -- cotes -----------------------------------------------------------
-    def parse_citations(self, data):
-        gagnant_map, place_map = {}, {}
-        for g in (data.get("listeCitations") or []):
-            type_pari = g.get("typePari")
-            target = place_map if type_pari == "SIMPLE_PLACE" else gagnant_map if type_pari == "SIMPLE_GAGNANT" else None
-            if target is None:
+    def parse_participants(self, data):
+        """Lit l'endpoint /participants (et non plus /citations) : chaque
+        partant y expose directement sa cote Gagnant en direct
+        (dernierRapportDirect.rapport) ET sa cote de reference du matin
+        (dernierRapportReference.rapport, figee par le PMU avant l'ouverture
+        des paris en direct). C'est cette cote de reference qui sert de T0
+        "officiel" quand elle est disponible (bien plus fiable qu'un simple
+        "premier snapshot vu par notre serveur").
+
+        Important : ici "rapport" est la cote DECIMALE classique du PMU
+        (ex: 4.5 = "4,5 contre 1"), PAS une probabilite implicite en % comme
+        avec /citations. Plus la valeur est BASSE, plus le cheval est
+        favori (a l'inverse de l'ancien champ "ratio" en %)."""
+        gagnant_map = {}
+        for p in (data.get("participants") or []):
+            if p.get("statut") != "PARTANT":
                 continue
-            for p in (g.get("participants") or []):
-                if p.get("statut") != "PARTANT":
-                    continue
-                cits = p.get("citations") or []
-                ratio = cits[0].get("ratio") if cits else None
-                if ratio is None:
-                    continue
-                num = str(p.get("numPmu"))
-                target[num] = {"nom": p.get("nom") or f"#{num}", "ratio": ratio, "favoris": bool(p.get("favoris"))}
-        return gagnant_map, place_map
+            direct = p.get("dernierRapportDirect") or {}
+            reference = p.get("dernierRapportReference") or {}
+            rapport_direct = direct.get("rapport")
+            if rapport_direct is None:
+                continue
+            num = str(p.get("numPmu"))
+            gagnant_map[num] = {
+                "nom": p.get("nom") or f"#{num}",
+                "ratio": rapport_direct,             # cote Gagnant en direct (decimale)
+                "ratioRef": reference.get("rapport"), # cote de reference PMU (T0 "officiel"), peut etre absente
+                "favoris": bool(p.get("favoris")),
+            }
+        return gagnant_map
 
     def get_value_at(self, num, target_t):
         """Renvoie la probabilite Gagnant (%) lissee (EMA) historique la plus
@@ -474,7 +489,9 @@ class Tracker:
                 minutes = elapsed_s / 60.0
                 if elapsed_s >= SPEED_MIN_WINDOW_S and first_p > 0 and ema > 0:
                     log_rate = (math.log(ema) - math.log(first_p)) / minutes
-                    speed[num] = (math.exp(log_rate) - 1) * 100  # en %/min
+                    # signe inverse : avec la cote decimale (endpoint participants),
+                    # une cote qui BAISSE = cheval plus favori = mouvement "positif"
+                    speed[num] = (math.exp(-log_rate) - 1) * 100  # en %/min
         return speed
 
     def build_tote_label(self, nb_live=None):
@@ -487,7 +504,7 @@ class Tracker:
         return " · ".join(parts)
 
     def handle_odds(self, data):
-        gagnant_map, _place_map = self.parse_citations(data)  # place n'est plus utilise
+        gagnant_map = self.parse_participants(data)
         nums = set(gagnant_map.keys())
         if not nums:
             return
@@ -496,11 +513,14 @@ class Tracker:
             self.horse_names[num] = gagnant_map[num]["nom"]
             if num not in self.favoris_order:
                 self.favoris_order.append(num)
-            # Cote T0 = premiere cote Gagnant (%) observee pour ce cheval depuis
-            # le debut du suivi de cette course (snapshot de reference, fige
-            # une fois pour toutes, jamais recalcule ensuite).
+            # Cote T0 = cote de reference PMU (dernierRapportReference, figee
+            # par le PMU avant l'ouverture des paris en direct) si elle est
+            # deja disponible ; sinon, a defaut, la premiere cote en direct
+            # observee pour ce cheval sert de repli. Fige une fois pour
+            # toutes, jamais recalculee ensuite.
             if num not in self.cote_t0:
-                self.cote_t0[num] = gagnant_map[num]["ratio"]
+                ref = gagnant_map[num].get("ratioRef")
+                self.cote_t0[num] = ref if ref is not None else gagnant_map[num]["ratio"]
 
         now = time.time()
         speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous
@@ -526,14 +546,20 @@ class Tracker:
             ema_15 = self.get_value_at(num, now - DELTA_WINDOW_S) if ema_now is not None else None
             delta15 = None
             if ema_now is not None and ema_15 is not None and ema_15 > 0 and ema_now > 0:
-                delta15 = (math.exp(math.log(ema_now) - math.log(ema_15)) - 1) * 100  # variation relative en %
+                # signe inverse (cote decimale : baisse = favorable, cf. update_speed_history)
+                delta15 = (math.exp(-(math.log(ema_now) - math.log(ema_15))) - 1) * 100  # variation relative en %
             deltas[num] = (cote_g, ema_15, delta15)
 
             cote_t0 = self.cote_t0.get(num)
             cote_live = cote_g
             ecart = None
             if cote_t0 is not None and cote_live is not None:
-                ecart = cote_live - cote_t0
+                # cote_t0 - cote_live (et non l'inverse) : avec une cote decimale,
+                # une BAISSE entre T0 et live = cheval devenu plus favori = "chute
+                # de cote" au sens hippique classique -> on veut un ecart POSITIF
+                # dans ce cas (convention conservee identique a avant le changement
+                # d'endpoint, ou "positif" signifiait deja "favorable").
+                ecart = cote_t0 - cote_live
             ecarts[num] = (cote_t0, cote_live, ecart)
 
         def sort_key(n):
@@ -592,9 +618,9 @@ class Tracker:
                     self.valuebet_seen[num] = {"delta": delta15, "speed": spd, "at": now}
             is_valuebet = num in self.valuebet_seen
 
-            # tocard = cote Gagnant actuelle sous le seuil -> masque, meme si
-            # marque bigmove/valuebet (sous 5% ca reste sans chance reelle)
-            is_longshot = cote_g is not None and cote_g < LONGSHOT_HIDE_THRESHOLD_PCT
+            # tocard = cote Gagnant actuelle au-dessus du seuil -> masque, meme si
+            # marque bigmove/valuebet (une cote trop longue reste sans chance reelle)
+            is_longshot = cote_g is not None and cote_g > LONGSHOT_HIDE_THRESHOLD_DECIMAL
 
             # remonte = la cote du cheval "remonte" depuis T0 (ecart negatif,
             # il devient moins favori) -> TOUJOURS masque, meme s'il est par
@@ -636,7 +662,7 @@ class Tracker:
             return
         today = datetime.now(PARIS_TZ)
         path = (f"{PMU_CIT_PREFIX}programme/{date_pmu(today)}/R{self.selected_reunion}/C{self.selected_course}"
-                f"/citations?paris=SIMPLE_GAGNANT&specialisation=OFFLINE&groupe=true")
+                f"/participants?specialisation=OFFLINE")
         try:
             data = http_get_json(PMU_CIT_HOST, path)
             self.handle_odds(data)
