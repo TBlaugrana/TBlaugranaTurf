@@ -358,7 +358,7 @@
   <div class="table-wrap">
     <div class="table-head">
       <span>Cheval</span>
-      <span>Écart</span>
+      <span>% Chute</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
   </div>
@@ -467,11 +467,11 @@ function renderTable(rows){
     const nom = r.nom || `#${num}`;
     const coteT0 = (r.coteT0 === null || r.coteT0 === undefined) ? undefined : r.coteT0;
     const coteLive = (r.coteLive === null || r.coteLive === undefined) ? undefined : r.coteLive;
-    const ecart = (r.ecart === null || r.ecart === undefined) ? undefined : r.ecart;
+    const pctChute = (r.pctChute === null || r.pctChute === undefined) ? undefined : r.pctChute;
 
     const coteT0Str = coteT0 !== undefined ? coteT0.toFixed(1) : "—";
     const coteLiveStr = coteLive !== undefined ? coteLive.toFixed(1) : "—";
-    const ecartStr = ecart !== undefined ? `${ecart >= 0 ? '+' : ''}${ecart.toFixed(1)}` : "—";
+    const pctChuteStr = pctChute !== undefined ? `${pctChute >= 0 ? '+' : ''}${pctChute.toFixed(1)}%` : "—";
 
     let row = rowEls[num];
     if(!row){
@@ -488,20 +488,20 @@ function renderTable(rows){
     if(rangEl.textContent !== rangStr) rangEl.textContent = rangStr;
 
     const coteEl = row.querySelector('.cote');
-    if(coteEl.textContent !== ecartStr){
-      coteEl.textContent = ecartStr;
+    if(coteEl.textContent !== pctChuteStr){
+      coteEl.textContent = pctChuteStr;
       const prevE = lastGagnant[num];
-      if(prevE !== undefined && ecart !== undefined && ecart !== prevE){
+      if(prevE !== undefined && pctChute !== undefined && pctChute !== prevE){
         row.classList.remove('flash-up','flash-down');
         void row.offsetWidth;
-        // ecart qui augmente = cote qui chute encore plus (favorable)
-        row.classList.add(ecart > prevE ? 'flash-up' : 'flash-down');
+        // % de chute qui augmente = cote qui chute encore plus (favorable)
+        row.classList.add(pctChute > prevE ? 'flash-up' : 'flash-down');
         clearTimeout(row._flashTimer);
         row._flashTimer = setTimeout(()=>row.classList.remove('flash-up','flash-down'), 500);
       }
     }
-    if(ecart !== undefined) lastGagnant[num] = ecart;
-    coteEl.title = "Écart entre la cote au moment du snapshot (T0) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le début du suivi";
+    if(pctChute !== undefined) lastGagnant[num] = pctChute;
+    coteEl.title = "% de chute entre la cote au moment du snapshot (T0) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le début du suivi";
 
     // Cote T0 : valeur de référence figée, affichage neutre (ne "flashe" pas)
     const deltaEl = row.querySelector('.var');
@@ -516,9 +516,9 @@ function renderTable(rows){
     if(vitesseEl){
       if(vitesseEl.textContent !== coteLiveStr) vitesseEl.textContent = coteLiveStr;
       vitesseEl.classList.remove('up','down','flat');
-      if(ecart === undefined) vitesseEl.classList.add('flat');
-      else if(ecart > 0) vitesseEl.classList.add('up');
-      else if(ecart < 0) vitesseEl.classList.add('down');
+      if(pctChute === undefined) vitesseEl.classList.add('flat');
+      else if(pctChute > 0) vitesseEl.classList.add('up');
+      else if(pctChute < 0) vitesseEl.classList.add('down');
       else vitesseEl.classList.add('flat');
       vitesseEl.title = isFast
         ? `Cote Gagnant en live — ⚡ mouvement rapide (${spd !== undefined ? (spd >= 0 ? '+' : '') + spd.toFixed(1) : '—'} %/min)`
