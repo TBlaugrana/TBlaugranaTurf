@@ -831,4 +831,98 @@ function renderTable(gagnantMap, placeMap, speedMap){
     }
     if(coteG !== undefined) lastGagnant[num] = coteG;
 
-    const cotePEl = row.querySelector('.cote-place'
+    const cotePEl = row.querySelector('.cote-place');
+    if(cotePEl.textContent !== cotePStr) cotePEl.textContent = cotePStr;
+    if(coteP !== undefined) lastPlace[num] = coteP;
+
+    const ecartEl = row.querySelector('.cote-ecart');
+    const ecartValueEl = ecartEl.querySelector('.ecart-value');
+    const ecartTargetEl = ecartEl.querySelector('.ecart-target');
+    if(ecartValueEl.textContent !== ecartStr) ecartValueEl.textContent = ecartStr;
+
+    // Code couleur progressif + badge 🎯 dès que l'écart atteint le premier palier
+    ecartEl.classList.remove('ecart-t1', 'ecart-t2');
+    if(ecart !== undefined && ecart >= ECART_TIER2){
+      ecartEl.classList.add('ecart-t2');
+    } else if(ecart !== undefined && ecart >= ECART_TIER1){
+      ecartEl.classList.add('ecart-t1');
+    }
+    ecartTargetEl.style.display = (ecart !== undefined && ecart >= ECART_TIER1) ? 'inline' : 'none';
+
+    // badge ⚡ : n'apparaît que si le mouvement récent (sur le Gagnant) dépasse le seuil de vitesse
+    const spd = speedMap ? speedMap[num] : undefined;
+    const isFast = spd !== undefined && Math.abs(spd) >= SPEED_THRESHOLD_PTS_PER_MIN;
+    const speedEl = row.querySelector('.speed-badge');
+    if(speedEl){
+      speedEl.style.display = isFast ? 'inline' : 'none';
+      if(isFast){
+        speedEl.textContent = '⚡';
+        speedEl.style.color = spd > 0 ? 'var(--danger)' : 'var(--success)';
+        speedEl.title = `Mouvement rapide : ${spd > 0 ? '+' : ''}${spd.toFixed(1)} pts de probabilité/min (Gagnant)`;
+      }
+    }
+
+    // ne montre que le top 5 du classement (par écart) ; un cheval qui retombe hors du
+    // top 5 est simplement masqué (pas supprimé) donc il réapparaît instantanément dès
+    // qu'il revient dans les 5 premiers au prochain rafraîchissement.
+    // Un cheval masqué manuellement par l'utilisateur (hiddenHorses) reste masqué même
+    // s'il fait partie du top 5, jusqu'à ce qu'il clique sur "afficher les masqués".
+    row.classList.toggle('row-hidden', idx >= TOP_N || hiddenHorses.has(num));
+
+    // réordonne : appendChild déplace le nœud existant, il n'est jamais recréé
+    rowsEl.appendChild(row);
+  });
+
+  // supprime les lignes de chevaux qui ne sont plus dans favorisOrder (cas très rare)
+  for(const num in rowEls){
+    if(!displayOrder.includes(num)){
+      rowEls[num].remove();
+      delete rowEls[num];
+    }
+  }
+
+  // anime le repositionnement (FLIP) — ignore les lignes masquées (pas de position valide)
+  rowsEl.querySelectorAll('.row:not(.row-hidden)').forEach(el=>{
+    const prev = prevRects[el.dataset.num];
+    if(prev){
+      const next = el.getBoundingClientRect();
+      const dy = prev.top - next.top;
+      if(dy !== 0){
+        el.style.transition = "none";
+        el.style.transform = `translateY(${dy}px)`;
+        requestAnimationFrame(()=>{
+          el.style.transition = "transform .35s ease, background-color .4s ease";
+          el.style.transform = "translateY(0)";
+        });
+      }
+    }
+  });
+}
+
+function tickCountdown(){
+  if(departTs !== null){
+    const secs = Math.floor(departTs - (Date.now()/1000));
+    countdownEl.textContent = fmtCountdown(secs);
+  }
+}
+
+function fmtCountdown(secs){
+  if(secs >= 0){
+    const h = Math.floor(secs/3600);
+    const m = Math.floor((secs%3600)/60);
+    const s = secs%60;
+    if(h > 0) return `${h}h${String(m).padStart(2,'0')}`;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  } else {
+    const elapsed = Math.abs(secs);
+    const m = Math.floor(elapsed/60);
+    const s = elapsed%60;
+    return `Partie ${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+}
+
+setInterval(tickCountdown, 500);
+loadProgramme();
+</script>
+</body>
+</html>
