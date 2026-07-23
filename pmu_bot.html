@@ -204,7 +204,7 @@
   .table-wrap{ flex:1; }
   .table-head{
     display:grid;
-    grid-template-columns: 1.15fr 76px 76px 76px;
+    grid-template-columns: 1fr 92px;
     gap:6px;
     padding:0 12px 8px;
     font-size:12px;
@@ -223,7 +223,7 @@
   }
   .row{
     display:grid;
-    grid-template-columns: 1.15fr 76px 76px 76px;
+    grid-template-columns: 1fr 92px;
     gap:6px;
     align-items:center;
     background:var(--surface);
@@ -232,11 +232,9 @@
     padding:12px 14px;
     min-height:51px;
     box-sizing:border-box;
-    transition: transform .35s ease, background-color .4s ease;
+    transition: transform .35s ease;
   }
   .row.row-hidden{ display:none; }
-  .row.flash-up{ background:var(--success-bg); }
-  .row.flash-down{ background:var(--danger-bg); }
   .horse{
     display:flex;
     align-items:center;
@@ -244,6 +242,13 @@
     font-size:16px;
     font-weight:600;
     overflow:hidden;
+  }
+  .horse-main{
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    overflow:hidden;
+    min-width:0;
   }
   .num-badge{
     flex:none;
@@ -257,6 +262,19 @@
     display:flex; align-items:center; justify-content:center;
   }
   .horse-name{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .horse-sub{
+    display:flex;
+    align-items:center;
+    gap:5px;
+    font-family:'JetBrains Mono',monospace;
+    font-variant-numeric:tabular-nums;
+    font-size:11px;
+    font-weight:500;
+    color:var(--text-dim);
+    white-space:nowrap;
+  }
+  .horse-sub .sub-label{ text-transform:uppercase; letter-spacing:.04em; font-size:9px; opacity:.75; }
+  .horse-sub .sub-sep{ opacity:.5; }
   .late-badge{ flex:none; font-size:12px; margin-left:2px; }
   .speed-badge{ flex:none; font-size:13px; margin-left:2px; }
   .speed-badge.speed-up{ filter: drop-shadow(0 0 0 var(--success)); }
@@ -264,23 +282,21 @@
   .cote{
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
-    font-size:15px;
+    font-size:11px;
     font-weight:700;
-    text-align:center;
     color:var(--text);
   }
   .cote-place{
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
-    font-size:16px;
-    font-weight:600;
-    text-align:center;
+    font-size:11px;
+    font-weight:500;
     color:var(--text-dim);
   }
   .cote-ecart{
     font-family:'JetBrains Mono',monospace;
     font-variant-numeric:tabular-nums;
-    font-size:18px;
+    font-size:22px;
     font-weight:700;
     text-align:center;
     color:var(--accent-2);
@@ -364,7 +380,7 @@
 
   <div class="table-wrap">
     <div class="table-head">
-      <span>Cheval</span><span>Gagnant</span><span>Placé</span><span>Écart</span>
+      <span>Cheval</span><span>Écart</span>
     </div>
     <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
     <div class="hidden-link" id="hiddenLink" style="display:none;"></div>
@@ -751,9 +767,15 @@ function buildRow(num){
   row.className = 'row';
   row.dataset.num = num;
   row.innerHTML = `
-    <div class="horse"><span class="num-badge"></span><span class="horse-name"></span><span class="speed-badge" style="display:none;"></span><button class="hide-btn" title="Masquer ce cheval" aria-label="Masquer ce cheval">✕</button></div>
-    <div class="cote"></div>
-    <div class="cote-place"></div>
+    <div class="horse">
+      <span class="num-badge"></span>
+      <div class="horse-main">
+        <span class="horse-name"></span>
+        <span class="horse-sub"><span class="cote"></span><span class="sub-sep">·</span><span class="cote-place"></span></span>
+      </div>
+      <span class="speed-badge" style="display:none;"></span>
+      <button class="hide-btn" title="Masquer ce cheval" aria-label="Masquer ce cheval">✕</button>
+    </div>
     <div class="cote-ecart"><span class="ecart-value"></span><span class="ecart-target" style="display:none;">🎯</span></div>
   `;
   row.querySelector('.num-badge').textContent = num;
@@ -799,6 +821,7 @@ function renderTable(gagnantMap, placeMap, speedMap){
   });
 
   const TOP_N = 5;
+  let visibleRank = 0;
 
   displayOrder.forEach((num, idx)=>{
     const nom = horseNames[num] || `#${num}`;
@@ -838,18 +861,7 @@ function renderTable(gagnantMap, placeMap, speedMap){
     }
 
     const coteEl = row.querySelector('.cote');
-    if(coteEl.textContent !== coteGStr){
-      coteEl.textContent = coteGStr;
-      // flash bref de la ligne quand la cote Gagnant bouge (cote qui baisse = favori qui se renforce)
-      const prevC = lastGagnant[num];
-      if(prevC !== undefined && coteG !== undefined && coteG !== prevC){
-        row.classList.remove('flash-up','flash-down');
-        void row.offsetWidth; // relance l'animation CSS
-        row.classList.add(coteG < prevC ? 'flash-up' : 'flash-down');
-        clearTimeout(row._flashTimer);
-        row._flashTimer = setTimeout(()=>row.classList.remove('flash-up','flash-down'), 500);
-      }
-    }
+    if(coteEl.textContent !== coteGStr) coteEl.textContent = coteGStr;
     if(coteG !== undefined) lastGagnant[num] = coteG;
 
     const cotePEl = row.querySelector('.cote-place');
@@ -883,12 +895,22 @@ function renderTable(gagnantMap, placeMap, speedMap){
       }
     }
 
-    // ne montre que le top 5 du classement (par écart) ; un cheval qui retombe hors du
-    // top 5 est simplement masqué (pas supprimé) donc il réapparaît instantanément dès
-    // qu'il revient dans les 5 premiers au prochain rafraîchissement.
-    // Un cheval masqué manuellement par l'utilisateur (hiddenHorses) reste masqué même
-    // s'il fait partie du top 5, jusqu'à ce qu'il clique sur "afficher les masqués".
-    row.classList.toggle('row-hidden', idx >= TOP_N || hiddenHorses.has(num));
+    // masque les chevaux dont l'écart est positif (Gagnant > Placé) : seuls les chevaux
+    // à écart nul ou négatif nous intéressent.
+    const ecartPositif = ecart !== undefined && ecart > 0;
+
+    // ne montre que le top 5 du classement (par écart, hors chevaux à écart positif) ; un
+    // cheval qui retombe hors du top 5 est simplement masqué (pas supprimé) donc il
+    // réapparaît instantanément dès qu'il revient dans les 5 premiers au prochain
+    // rafraîchissement. Un cheval masqué manuellement par l'utilisateur (hiddenHorses)
+    // reste masqué même s'il fait partie du top 5, jusqu'à ce qu'il clique sur
+    // "afficher les masqués".
+    let dansTop5 = false;
+    if(!ecartPositif){
+      dansTop5 = visibleRank < TOP_N;
+      visibleRank++;
+    }
+    row.classList.toggle('row-hidden', ecartPositif || !dansTop5 || hiddenHorses.has(num));
 
     // réordonne : appendChild déplace le nœud existant, il n'est jamais recréé
     rowsEl.appendChild(row);
