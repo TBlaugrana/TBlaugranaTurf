@@ -373,10 +373,26 @@
 </div>
 
 <script>
+window.addEventListener('error', function(e){
+  const el = document.getElementById('statusLine');
+  if(el){
+    el.textContent = "Erreur JS : " + (e.message || (e.error && e.error.message) || "inconnue");
+    el.style.color = "red";
+  }
+});
+window.addEventListener('unhandledrejection', function(e){
+  const el = document.getElementById('statusLine');
+  if(el){
+    el.textContent = "Erreur (promise) : " + ((e.reason && e.reason.message) || e.reason || "inconnue");
+    el.style.color = "red";
+  }
+});
+
 const PMU_BASE_PROG = "/proxy/61";
 const PMU_BASE_CITATIONS = "/proxy/citations";
 const REFRESH_INTERVAL_MS = 500;      // délai minimal entre deux cycles de poll (2 requêtes/cycle : SG + SP)
 const FETCH_TIMEOUT_MS = 4000;        // abandonne un cycle trop lent au lieu d'attendre
+const PROGRAMME_FETCH_TIMEOUT_MS = 8000;   // idem pour le chargement initial du programme, pour ne jamais rester bloqué en silence
 const SPEED_WINDOW_MS = 45000;             // fenêtre glissante utilisée pour calculer la vitesse de mouvement (sur le Gagnant)
 const SPEED_THRESHOLD_PTS_PER_MIN = 6;     // seuil (points de probabilité implicite / min) au-delà duquel on affiche le badge ⚡
 const ECART_TIER1 = 3;                     // écart (%) à partir duquel la cellule Écart passe en ambre + badge 🎯
@@ -474,18 +490,23 @@ function parseProgramme(data){
 async function loadProgramme(){
   statusLineEl.textContent = "Chargement du programme…";
   statusLineEl.style.color = "var(--text-dim)";
+  const controller = new AbortController();
+  const killer = setTimeout(()=>controller.abort(), PROGRAMME_FETCH_TIMEOUT_MS);
   try{
     const url = `${PMU_BASE_PROG}/programme/${datePmu(today)}?specialisation=OFFLINE`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: controller.signal });
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     allCourses = parseProgramme(data);
     statusLineEl.textContent = `Programme chargé (${allCourses.length} courses)`;
     selectNextCourse();
   }catch(e){
-    statusLineEl.textContent = `Erreur programme : ${e.message}`;
+    const msg = e.name === "AbortError" ? `Timeout (${PROGRAMME_FETCH_TIMEOUT_MS/1000}s) — le serveur/proxy ne répond pas` : e.message;
+    statusLineEl.textContent = `Erreur programme : ${msg}`;
     statusLineEl.style.color = "var(--danger)";
+    courseInfoEl.textContent = "Échec du chargement — voir message ci-dessous";
   }finally{
+    clearTimeout(killer);
     scheduleReprog();
   }
 }
