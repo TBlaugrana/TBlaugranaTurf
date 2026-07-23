@@ -204,7 +204,7 @@
   .table-wrap{ flex:1; }
   .table-head{
     display:grid;
-    grid-template-columns: 1fr 78px;
+    grid-template-columns: 1fr 96px;
     gap:6px;
     padding:0 12px 8px;
     font-size:12px;
@@ -223,7 +223,7 @@
   }
   .row{
     display:grid;
-    grid-template-columns: 1fr 78px;
+    grid-template-columns: 1fr 96px;
     gap:6px;
     align-items:center;
     background:var(--surface);
@@ -302,10 +302,14 @@
     align-items:center;
     justify-content:center;
     gap:3px;
+    white-space:nowrap;
+    box-sizing:border-box;
+    padding:4px 2px;
+    border-radius:6px;
   }
   /* Paliers de couleur selon l'écart Gagnant - Placé : plus c'est haut, plus c'est marqué */
   .cote-ecart.ecart-t1{ color:#b8791f; }                 /* 3% <= écart < 5% : ambre */
-  .cote-ecart.ecart-t2{ color:#fff; background:var(--danger); border-radius:6px; padding:2px 5px; } /* écart >= 5% : rouge plein */
+  .cote-ecart.ecart-t2{ color:#fff; background:var(--danger); } /* écart >= 5% : rouge plein, occupe toute la cellule */
   .ecart-target{ flex:none; font-size:11px; }
   .fav-badge{ flex:none; font-size:12px; margin-left:2px; color:var(--accent-2); }
   .var{
@@ -449,7 +453,53 @@ let rowEls = {};          // num -> élément DOM de la ligne (réutilisé d'un 
 let lastGagnant = {};     // num -> dernière cote Gagnant affichée (pour détecter les variations et flasher)
 let lastPlace = {};       // num -> dernière cote Placé affichée
 let oddsHistory = {};     // num -> [{t, prob}] historique glissant (probabilité implicite Gagnant) pour calculer la vitesse
-let hiddenHorses = new Set(); // num (string) -> masqués manuellement par l'utilisateur, en mémoire uniquement (reset à chaque nouvelle course)
+let hiddenHorses = new Set(); // num (string) -> masqués manuellement par l'utilisateur, persistés en localStorage par course
+
+const STORAGE_KEY_SELECTION = 'pmu_bot_selection';
+const STORAGE_KEY_HIDDEN_PREFIX = 'pmu_bot_hidden_';
+
+// Clé de stockage propre à la course actuellement suivie (une par jour + réunion + course).
+function raceStorageKey(){
+  return STORAGE_KEY_HIDDEN_PREFIX + datePmu(today) + `_R${selectedReunion}C${selectedCourse}`;
+}
+
+// Sauvegarde la course suivie (réunion/course/heure de départ) pour pouvoir la retrouver
+// après un rechargement de page, au lieu de rebasculer bêtement sur la prochaine course.
+function saveSelection(){
+  try{
+    localStorage.setItem(STORAGE_KEY_SELECTION, JSON.stringify({
+      date: datePmu(today),
+      reunion: selectedReunion,
+      course: selectedCourse,
+      departTs: departTs
+    }));
+  }catch(e){ /* stockage indisponible (navigation privée, quota…) : on continue sans persister */ }
+}
+
+// Relit la dernière course suivie enregistrée, si elle date d'aujourd'hui.
+function loadSelection(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY_SELECTION);
+    if(!raw) return null;
+    const saved = JSON.parse(raw);
+    if(!saved || saved.date !== datePmu(today) || !saved.reunion || !saved.course) return null;
+    return saved;
+  }catch(e){ return null; }
+}
+
+function saveHiddenHorses(){
+  try{
+    localStorage.setItem(raceStorageKey(), JSON.stringify([...hiddenHorses]));
+  }catch(e){ /* idem : silencieux si le stockage n'est pas disponible */ }
+}
+
+function loadHiddenHorsesForCurrentRace(){
+  try{
+    const raw = localStorage.getItem(raceStorageKey());
+    if(!raw) return new Set();
+    return new Set(JSON.parse(raw));
+  }catch(e){ return new Set(); }
+}
 
 const hiddenLinkEl = document.getElementById('hiddenLink');
 
@@ -466,6 +516,7 @@ function updateHiddenLink(){
 
 hiddenLinkEl.addEventListener('click', ()=>{
   hiddenHorses.clear();
+  saveHiddenHorses();
   for(const num in rowEls){
     rowEls[num].classList.remove('row-hidden');
   }
@@ -501,6 +552,41 @@ function parseProgramme(data){
   return courses;
 }
 
+// Tente de reprendre le suivi de la course enregistrée avant un rechargement de page,
+// plutôt que de rebasculer automatiquement sur la course suivante (ce qui arrivait
+// auparavant si la page était rechargée juste après le départ d'une course).
+// Retourne true si une course a bien été restaurée.
+function tryRestoreSelection(){
+  const saved = loadSelection();
+  if(!saved) return false;
+
+  // Si la course enregistrée est partie depuis plus de RACE_STALE_MS, elle est
+  // considérée comme terminée : on laisse la sélection automatique normale reprendre la main.
+  if(saved.departTs !== null && saved.departTs !== undefined && (Date.now() - saved.departTs * 1000) > RACE_STALE_MS){
+    return false;
+  }
+
+  selectedReunion = saved.reunion;
+  selectedCourse = saved.course;
+  departTs = (saved.departTs !== null && saved.departTs !== undefined) ? saved.departTs : null;
+
+  const current = allCourses.find(c => c.numReunion === saved.reunion && c.course === saved.course);
+  if(current){
+    departTs = current.depart / 1000.0;
+    selectedDiscipline = current.discipline;
+    selectedNbPartants = current.nbPartants;
+    courseInfoEl.textContent = formatCourseLabel(current);
+  } else {
+    // La course a pu disparaître du programme (juste après son départ) : on continue
+    // quand même de la suivre, le contrôle RACE_STALE_MS ci-dessus prendra le relais.
+    courseInfoEl.textContent = `R${saved.reunion}C${saved.course} — reprise du suivi…`;
+  }
+  updateToteLabel();
+  saveSelection();
+  startTracking();
+  return true;
+}
+
 async function loadProgramme(){
   statusLineEl.textContent = "Chargement du programme…";
   statusLineEl.style.color = "var(--text-dim)";
@@ -513,7 +599,9 @@ async function loadProgramme(){
     const data = await res.json();
     allCourses = parseProgramme(data);
     statusLineEl.textContent = `Programme chargé (${allCourses.length} courses)`;
-    selectNextCourse();
+    if(!tryRestoreSelection()){
+      selectNextCourse();
+    }
   }catch(e){
     const msg = e.name === "AbortError" ? `Timeout (${PROGRAMME_FETCH_TIMEOUT_MS/1000}s) — le serveur/proxy ne répond pas` : e.message;
     statusLineEl.textContent = `Erreur programme : ${msg}`;
@@ -576,6 +664,7 @@ function handleProgrammeRefresh(){
       departTs = newDepartTs;
       courseInfoEl.textContent = formatCourseLabel(current);
       updateToteLabel();
+      saveSelection();
       if(wasDelayed){
         snapLineEl.textContent = "⏱ Départ retardé — suivi maintenu…";
       }
@@ -621,6 +710,7 @@ function selectNextCourse(){
   selectedNbPartants = chosen.nbPartants;
   courseInfoEl.textContent = formatCourseLabel(chosen);
   updateToteLabel();
+  saveSelection();
   startTracking();
 }
 
@@ -640,7 +730,7 @@ function startTracking(){
   lastGagnant = {};
   lastPlace = {};
   oddsHistory = {};
-  hiddenHorses.clear();
+  hiddenHorses = loadHiddenHorsesForCurrentRace();
   updateHiddenLink();
   rowsEl.innerHTML = "";
   snapLineEl.style.display = "";
@@ -766,18 +856,19 @@ function buildRow(num){
   row.dataset.num = num;
   row.innerHTML = `
     <div class="horse">
+      <button class="hide-btn" title="Masquer ce cheval" aria-label="Masquer ce cheval">✕</button>
       <span class="num-badge"></span>
       <div class="horse-main">
         <span class="horse-name"></span>
         <span class="horse-sub"><span class="cote"></span><span class="sub-sep">·</span><span class="cote-place"></span></span>
       </div>
-      <button class="hide-btn" title="Masquer ce cheval" aria-label="Masquer ce cheval">✕</button>
     </div>
     <div class="cote-ecart"><span class="ecart-value"></span><span class="ecart-target" style="display:none;">🎯</span></div>
   `;
   row.querySelector('.num-badge').textContent = num;
   row.querySelector('.hide-btn').addEventListener('click', ()=>{
     hiddenHorses.add(num);
+    saveHiddenHorses();
     row.classList.add('row-hidden');
     updateHiddenLink();
   });
