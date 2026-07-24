@@ -19,9 +19,11 @@ Deploiement Railway : le serveur ecoute sur 0.0.0.0:$PORT (Railway fournit la
 variable d'environnement PORT). En local, sans PORT defini, il ecoute sur
 0.0.0.0:8000 comme avant.
 """
+import csv
 import http.server
 import socketserver
 import http.client
+import io
 import json
 import math
 import os
@@ -130,6 +132,135 @@ STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_s
 SAVE_INTERVAL_S = 5              # ecrit l'etat sur disque au plus toutes les 5s
 
 # ---------------------------------------------------------------------------
+# Journal silencieux des signaux valuebet (pour analyse ulterieure : ROI,
+# taux de reussite, etc.). N'affecte ni l'interface ni le fonctionnement du
+# suivi : c'est un simple fichier ecrit en tache de fond, jamais lu ni
+# expose par /api/state. A chaque bascule vers la course suivante, on fige
+# la liste des chevaux marques valuebet sur la course qu'on quitte (pas
+# avant, pour laisser le marquage se stabiliser jusqu'au dernier moment),
+# puis on va chercher en arriere-plan les rapports definitifs PMU de cette
+# course pour pouvoir calculer un ROI plus tard.
+# ---------------------------------------------------------------------------
+VALUEBET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "valuebet_log.jsonl")
+VALUEBET_LOG_LOCK = threading.Lock()
+RAPPORTS_FETCH_ATTEMPTS = 10     # nombre de tentatives pour recuperer les rapports definitifs
+RAPPORTS_FETCH_RETRY_DELAY_S = 20  # delai entre deux tentatives (les rapports definitifs mettent parfois plusieurs minutes a etre publies)
+
+
+def _iter_dicts_with_typepari(obj, current_typepari=None):
+    """Parcourt recursivement une structure JSON (list/dict imbriques) et
+    fait remonter, pour chaque dict rencontre, le dernier "typePari" (ou
+    equivalent) vu au-dessus de lui dans l'arbre. Utilise par
+    extract_dividende ci-dessous pour ne pas dependre d'une forme JSON
+    unique : l'API PMU peut structurer rapports-definitifs differemment
+    selon le type de pari, et je n'ai pas pu verifier un payload reel."""
+    if isinstance(obj, dict):
+        tp = obj.get("typePari") or obj.get("type") or obj.get("libelleTypePari") or current_typepari
+        yield obj, tp
+        for v in obj.values():
+            yield from _iter_dicts_with_typepari(v, tp)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _iter_dicts_with_typepari(item, current_typepari)
+
+
+def extract_dividende(rapports, num, keyword):
+    """Cherche, dans la reponse brute /rapports-definitifs (dont le detail
+    exact peut varier selon le type de pari — je n'ai pas pu tester contre
+    un payload PMU reel), le dividende pour un cheval (num) et un type de
+    pari dont le libelle contient `keyword` (ex: "GAGNANT", "PLACE").
+
+    Best-effort volontairement tolerant : essaie plusieurs noms de champs
+    possibles pour "combinaison" (identifiant du cheval) et pour le
+    dividende lui-meme, a n'importe quelle profondeur de la structure.
+    Renvoie None des que rien ne matche plutot que de planter — la colonne
+    JSON brute (rapportsRawJson) reste de toute facon disponible en secours
+    pour verifier/completer a la main."""
+    if rapports is None:
+        return None
+    combinaison_keys = ("combinaison", "combinaisons", "numPmu", "numeroPmu", "numero", "numeros")
+    dividende_keys = ("dividendePourUnEuro", "dividendePourUneMise", "dividende", "rapportDirect",
+                       "rapport", "montant", "rapportPourUnEuro")
+    try:
+        for d, tp in _iter_dicts_with_typepari(rapports):
+            tp_str = str(tp or "").upper()
+            if keyword not in tp_str:
+                continue
+            matched = False
+            for ck in combinaison_keys:
+                if ck not in d:
+                    continue
+                val = d[ck]
+                if isinstance(val, list):
+                    if str(num) in [str(x) for x in val]:
+                        matched = True
+                elif str(val) == str(num):
+                    matched = True
+                if matched:
+                    break
+            if not matched:
+                continue
+            for dk in dividende_keys:
+                if d.get(dk) is not None:
+                    return d[dk]
+    except Exception:
+        return None
+    return None
+
+
+def build_valuebet_csv():
+    """Lit le journal valuebet_log.jsonl (une ligne JSON par course) et le
+    met a plat en CSV, une ligne par cheval valuebet. Colonnes best-effort
+    pour Gagnant/Place ; la colonne rapportsRawJson garde toujours les
+    rapports bruts de la course en secours si l'extraction ci-dessus ne
+    trouve rien (format PMU pas garanti identique pour tous les paris)."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "date", "reunion", "course", "label", "loggedAt",
+        "num", "nom", "coteT0", "pctChuteAuMarquage", "marqueAt",
+        "dividendeGagnant", "dividendePlace", "rapportsRawJson",
+    ])
+    try:
+        with open(VALUEBET_LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                rapports = entry.get("rapports")
+                rapports_raw = json.dumps(rapports, ensure_ascii=False) if rapports is not None else ""
+                logged_at = entry.get("loggedAt")
+                logged_at_str = (datetime.fromtimestamp(logged_at, tz=PARIS_TZ).isoformat()
+                                  if logged_at else "")
+                for h in (entry.get("valuebetHorses") or []):
+                    num = h.get("num")
+                    marque_at = h.get("marqueAt")
+                    marque_at_str = (datetime.fromtimestamp(marque_at, tz=PARIS_TZ).isoformat()
+                                      if marque_at else "")
+                    writer.writerow([
+                        entry.get("date", ""),
+                        entry.get("reunion", ""),
+                        entry.get("course", ""),
+                        entry.get("label", ""),
+                        logged_at_str,
+                        num,
+                        h.get("nom", ""),
+                        h.get("coteT0", ""),
+                        h.get("pctChuteAuMarquage", ""),
+                        marque_at_str,
+                        extract_dividende(rapports, num, "GAGNANT"),
+                        extract_dividende(rapports, num, "PLACE"),
+                        rapports_raw,
+                    ])
+    except FileNotFoundError:
+        pass  # aucun signal valuebet enregistre pour l'instant -> CSV avec juste l'entete
+    return buf.getvalue()
+
+# ---------------------------------------------------------------------------
 # Etat partage, lu par les threads HTTP (GET /api/state) et ecrit uniquement
 # par le thread de suivi (tracker_loop). Protege par un verrou.
 # ---------------------------------------------------------------------------
@@ -180,6 +311,16 @@ def http_get_json(host, path):
 
 def date_pmu(d):
     return d.strftime("%d%m%Y")
+
+
+def fetch_rapports_definitifs(date_str, reunion, course):
+    """Recupere les rapports definitifs (Gagnant, Place, etc.) d'une course
+    donnee, utilises uniquement pour le journal valuebet (calcul de ROI a
+    posteriori). Peut renvoyer None si les rapports ne sont pas encore
+    publies (l'appelant reessaie plus tard)."""
+    path = (f"{PMU_CIT_PREFIX}programme/{date_str}/R{reunion}/C{course}"
+            f"/rapports-definitifs?specialisation=OFFLINE")
+    return http_get_json(PMU_CIT_HOST, path)
 
 
 def is_annulee(obj):
@@ -353,6 +494,59 @@ class Tracker:
         except Exception as e:
             set_state(statusLine=f"Erreur programme : {e}")
 
+    # -- journal silencieux valuebet (aucun impact interface/etat) --------
+    def capture_valuebet_snapshot(self):
+        """Fige la liste des chevaux actuellement marques valuebet sur la
+        course en cours, avec de quoi les identifier et calculer un ROI
+        ensuite (num, nom, cote T0, % de chute au moment du marquage)."""
+        horses = []
+        for num, info in self.valuebet_seen.items():
+            horses.append({
+                "num": num,
+                "nom": self.horse_names.get(num, f"#{num}"),
+                "coteT0": self.cote_t0.get(num),
+                "pctChuteAuMarquage": info.get("pctChute"),
+                "marqueAt": info.get("at"),
+            })
+        return horses
+
+    def log_race_valuebets_async(self, date_str, reunion, course, label, horses):
+        """Lance en tache de fond (thread separe, ne bloque jamais la boucle
+        de suivi) la recuperation des rapports definitifs de la course
+        qu'on vient de quitter, puis ecrit une ligne JSON dans le journal.
+        Ne fait rien si aucun cheval n'etait marque valuebet (rien a logger)."""
+        if not horses:
+            return
+
+        def worker():
+            rapports = None
+            for _ in range(RAPPORTS_FETCH_ATTEMPTS):
+                try:
+                    rapports = fetch_rapports_definitifs(date_str, reunion, course)
+                    if rapports:
+                        break
+                except Exception:
+                    pass
+                time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
+
+            entry = {
+                "loggedAt": time.time(),
+                "date": date_str,
+                "reunion": reunion,
+                "course": course,
+                "label": label,
+                "valuebetHorses": horses,
+                "rapports": rapports,  # None si toujours indisponible malgre les tentatives
+            }
+            try:
+                with VALUEBET_LOG_LOCK:
+                    with open(VALUEBET_LOG_FILE, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception as e:
+                print(f"[VALUEBET-LOG] echec ecriture journal : {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def select_next_course(self):
         now_ms = time.time() * 1000
         upcoming = [c for c in self.all_courses if c["depart"] and c["depart"] >= now_ms]
@@ -360,6 +554,19 @@ class Tracker:
         if not chosen:
             set_state(courseInfo="Aucune course disponible.", statusLine="Aucune course disponible pour le moment.")
             return
+
+        # Juste avant de basculer vers la course suivante (pas avant : le
+        # marquage valuebet doit avoir le temps de se stabiliser jusqu'au
+        # bout), on fige silencieusement les chevaux valuebet de la course
+        # qu'on quitte et on programme la recuperation de ses rapports.
+        if self.selected_reunion is not None and self.selected_course is not None:
+            prev_horses = self.capture_valuebet_snapshot()
+            prev_label = f"R{self.selected_reunion}C{self.selected_course}"
+            prev_date = date_pmu(datetime.now(PARIS_TZ))
+            self.log_race_valuebets_async(
+                prev_date, self.selected_reunion, self.selected_course, prev_label, prev_horses
+            )
+
         self.selected_reunion = chosen["numReunion"]
         self.selected_course = chosen["course"]
         self.depart_ts = chosen["depart"] / 1000.0
@@ -796,11 +1003,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/state"):
             self.handle_state()
+        elif self.path.startswith("/api/valuebet-log.csv"):
+            self.handle_valuebet_csv()
         elif self.path == "/":
             self.path = "/pmu_bot.html"
             super().do_GET()
         else:
             super().do_GET()
+
+    def handle_valuebet_csv(self):
+        body = build_valuebet_csv().encode("utf-8-sig")  # BOM pour un Excel/LibreOffice content
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", 'attachment; filename="valuebet_log.csv"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def handle_state(self):
         body = get_state_json().encode("utf-8")
