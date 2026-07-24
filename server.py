@@ -52,14 +52,14 @@ RACE_STALE_S = 6 * 60           # bascule vers la course suivante 6 min apres so
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
-# Delai (en secondes) apres le debut du suivi d'une course avant de capturer
-# le snapshot T0 (au lieu de le figer des le tout premier poll). Le temps que
-# les premieres cotes en direct se stabilisent un peu. Pendant ce delai, le
-# tableau affiche TOUS les chevaux tries du plus au moins favori (cote live
-# croissante), sans masquage ni badges, avec un message d'attente. Une fois
-# le snapshot pris, le tableau bascule sur le mode normal (classement par %
-# de chute depuis T0, top N, valuebet...).
-SNAPSHOT_WARMUP_S = 8.0
+# Le snapshot T0 (reference servant a calculer "% Chute") n'est plus fige au
+# tout premier poll, mais seulement a l'heure de depart officielle de la
+# course (la "cote de depart"). Avant ce moment, le tableau affiche un mode
+# "warm-up" : TOUS les chevaux tries du plus au moins favori (cote live
+# croissante), sans masquage ni badges, avec un message d'attente indiquant
+# le temps restant avant le depart. Des que l'heure de depart est atteinte,
+# le snapshot est pris et le tableau bascule sur le mode normal (classement
+# par % de chute depuis T0, top N, valuebet...).
 
 # Plage de cote Gagnant en DIRECT (cote decimale, endpoint /participants)
 # acceptee dans le tableau : un cheval dont la cote live sort de cette plage
@@ -224,7 +224,7 @@ class Tracker:
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
         self.valuebet_seen = {}   # num -> {"pctChute": ..., "at": ...} une fois le seuil de chute franchi (marquage definitif)
-        self.tracking_started_at = None  # timestamp du debut du suivi de la course en cours (pour le delai avant snapshot T0)
+        self.tracking_started_at = None  # timestamp du debut du suivi de la course en cours (informatif)
         self.snapshot_taken = False      # True des que le snapshot T0 a ete capture (bascule mode warm-up -> mode normal)
         self.last_reprog = 0.0
         self.last_save = 0.0
@@ -379,7 +379,7 @@ class Tracker:
         self.valuebet_seen = {}
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
-        set_state(rows=[], snapLine="📸 Snapshot T0 en attente…")
+        set_state(rows=[], snapLine="📸 Snapshot T0 au depart de la course — en attente…")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -566,27 +566,30 @@ class Tracker:
 
         # -- capture (retardee) du snapshot T0 ---------------------------
         # Le snapshot T0 n'est plus fige des le tout premier poll, mais
-        # seulement apres SNAPSHOT_WARMUP_S secondes de suivi. Avant cette
-        # capture, on affiche un mode "warm-up" : tous les chevaux, tries du
-        # plus au moins favori, avec un message d'attente ; pas de % de
-        # chute, pas de masquage, pas de badge (rien de tout ca n'a de sens
-        # tant que la reference T0 n'existe pas).
+        # seulement a l'heure de depart officielle de la course ("cote de
+        # depart"). Avant ce moment, on affiche un mode "warm-up" : tous les
+        # chevaux, tries du plus au moins favori, avec un message d'attente
+        # indiquant le temps restant avant le depart ; pas de % de chute, pas
+        # de masquage, pas de badge (rien de tout ca n'a de sens tant que la
+        # reference T0 n'existe pas).
         if not self.snapshot_taken:
-            warmup_elapsed = (
-                (now - self.tracking_started_at) if self.tracking_started_at is not None
-                else SNAPSHOT_WARMUP_S
-            )
-            if warmup_elapsed >= SNAPSHOT_WARMUP_S:
+            depart_reached = self.depart_ts is not None and now >= self.depart_ts
+            if depart_reached:
                 for num in nums:
                     self.cote_t0.setdefault(num, gagnant_map[num]["ratio"])
                 self.snapshot_taken = True
             else:
                 rows = self.build_warmup_rows(gagnant_map)
-                remaining = max(0.0, SNAPSHOT_WARMUP_S - warmup_elapsed)
-                now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
+                if self.depart_ts is not None:
+                    remaining_s = max(0, int(self.depart_ts - now))
+                    m, s = divmod(remaining_s, 60)
+                    remaining_str = f"{m}:{s:02d}"
+                    snap_msg = f"📸 Snapshot T0 au depart de la course — dans {remaining_str}"
+                else:
+                    snap_msg = "📸 Snapshot T0 au depart de la course — en attente de l'heure de depart…"
                 set_state(
                     rows=rows,
-                    snapLine=f"📸 Snapshot T0 en attente… ({remaining:.0f}s) — {now_str}",
+                    snapLine=snap_msg,
                     toteLabel=self.build_tote_label(len(nums)),
                     statusLine="",
                     updatedAt=time.time(),
