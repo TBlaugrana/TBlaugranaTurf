@@ -143,8 +143,8 @@ SAVE_INTERVAL_S = 5              # ecrit l'etat sur disque au plus toutes les 5s
 # ---------------------------------------------------------------------------
 VALUEBET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "valuebet_log.jsonl")
 VALUEBET_LOG_LOCK = threading.Lock()
-RAPPORTS_FETCH_ATTEMPTS = 10     # nombre de tentatives pour recuperer les rapports definitifs
-RAPPORTS_FETCH_RETRY_DELAY_S = 20  # delai entre deux tentatives (les rapports definitifs mettent parfois plusieurs minutes a etre publies)
+RAPPORTS_FETCH_ATTEMPTS = 20      # nombre de tentatives pour recuperer les rapports definitifs
+RAPPORTS_FETCH_RETRY_DELAY_S = 60  # delai entre deux tentatives (~20 min de fenetre au total : les rapports definitifs peuvent mettre du temps, surtout en cas d'enquete des commissaires)
 
 
 def _iter_dicts_with_typepari(obj, current_typepari=None):
@@ -219,7 +219,7 @@ def build_valuebet_csv():
     writer.writerow([
         "date", "reunion", "course", "label", "loggedAt",
         "num", "nom", "coteT0", "pctChuteAuMarquage", "marqueAt",
-        "dividendeGagnant", "dividendePlace", "rapportsRawJson",
+        "dividendeGagnant", "dividendePlace", "rapportsType", "rapportsRawJson",
     ])
     try:
         with open(VALUEBET_LOG_FILE, "r", encoding="utf-8") as f:
@@ -254,6 +254,7 @@ def build_valuebet_csv():
                         marque_at_str,
                         extract_dividende(rapports, num, "GAGNANT"),
                         extract_dividende(rapports, num, "PLACE"),
+                        entry.get("rapportsType", ""),
                         rapports_raw,
                     ])
     except FileNotFoundError:
@@ -320,6 +321,16 @@ def fetch_rapports_definitifs(date_str, reunion, course):
     publies (l'appelant reessaie plus tard)."""
     path = (f"{PMU_CIT_PREFIX}programme/{date_str}/R{reunion}/C{course}"
             f"/rapports-definitifs?specialisation=OFFLINE")
+    return http_get_json(PMU_CIT_HOST, path)
+
+
+def fetch_rapports_provisoires(date_str, reunion, course):
+    """Repli sur les rapports provisoires (publies plus vite que les
+    definitifs, mais susceptibles d'etre revus en cas d'enquete des
+    commissaires) si les definitifs ne sont toujours pas disponibles apres
+    toutes les tentatives."""
+    path = (f"{PMU_CIT_PREFIX}programme/{date_str}/R{reunion}/C{course}"
+            f"/rapports-provisoires?specialisation=OFFLINE")
     return http_get_json(PMU_CIT_HOST, path)
 
 
@@ -520,14 +531,35 @@ class Tracker:
 
         def worker():
             rapports = None
-            for _ in range(RAPPORTS_FETCH_ATTEMPTS):
+            rapports_type = None
+            last_err = None
+            for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
                 try:
                     rapports = fetch_rapports_definitifs(date_str, reunion, course)
                     if rapports:
+                        rapports_type = "definitifs"
                         break
-                except Exception:
-                    pass
+                except Exception as e:
+                    last_err = e
                 time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
+
+            if rapports is None:
+                # repli : les definitifs ne sont toujours pas la apres ~20 min,
+                # on tente les provisoires pour ne pas rentrer bredouille
+                try:
+                    rapports = fetch_rapports_provisoires(date_str, reunion, course)
+                    if rapports:
+                        rapports_type = "provisoires"
+                except Exception as e:
+                    last_err = e
+
+            if rapports is None:
+                print(f"[VALUEBET-LOG] {label} : rapports indisponibles apres "
+                      f"{RAPPORTS_FETCH_ATTEMPTS} tentatives (+ repli provisoires echoue). "
+                      f"Derniere erreur : {last_err!r}")
+            else:
+                print(f"[VALUEBET-LOG] {label} : rapports {rapports_type} recuperes avec succes "
+                      f"({len(horses)} cheval(aux) valuebet)")
 
             entry = {
                 "loggedAt": time.time(),
@@ -536,7 +568,8 @@ class Tracker:
                 "course": course,
                 "label": label,
                 "valuebetHorses": horses,
-                "rapports": rapports,  # None si toujours indisponible malgre les tentatives
+                "rapports": rapports,           # None si toujours indisponible malgre les tentatives
+                "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
             }
             try:
                 with VALUEBET_LOG_LOCK:
