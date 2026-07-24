@@ -52,6 +52,15 @@ RACE_STALE_S = 6 * 60           # bascule vers la course suivante 6 min apres so
 DELTA_WINDOW_S = 15             # fenetre de comparaison : cote Gagnant actuelle vs il y a 15s
 GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progression sur 15s)
 
+# Delai (en secondes) apres le debut du suivi d'une course avant de capturer
+# le snapshot T0 (au lieu de le figer des le tout premier poll). Le temps que
+# les premieres cotes en direct se stabilisent un peu. Pendant ce delai, le
+# tableau affiche TOUS les chevaux tries du plus au moins favori (cote live
+# croissante), sans masquage ni badges, avec un message d'attente. Une fois
+# le snapshot pris, le tableau bascule sur le mode normal (classement par %
+# de chute depuis T0, top N, valuebet...).
+SNAPSHOT_WARMUP_S = 8.0
+
 # Plage de cote Gagnant en DIRECT (cote decimale, endpoint /participants)
 # acceptee dans le tableau : un cheval dont la cote live sort de cette plage
 # est masque — trop court (moins de COTE_RANGE_MIN, deja hyper favori, peu
@@ -89,6 +98,12 @@ BIGMOVE_THRESHOLD_PCT = 15.0
 BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la derniere minute avant le
                                   # depart (avant, les mouvements sont frequents mais les enjeux sont faibles)
 
+# Seuil de declenchement du signal VALUEBET : des que la cote d'un cheval a
+# chute (pctChute, colonne "% Chute", ecart T0 -> Live) de 10% ou plus, il
+# est marque valuebet de facon DEFINITIVE (comme bigmove), independamment de
+# la vitesse de variation ou d'une fenetre de temps avant le depart.
+VALUEBET_CHUTE_THRESHOLD_PCT = 10.0
+
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
 
@@ -97,7 +112,7 @@ HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
 # a la selection automatique et n'apparaissent jamais dans l'etat renvoye
 # au bot). Mettre a False pour revenir au comportement d'origine (toutes
 # les reunions, France + etranger).
-HIDE_FOREIGN_RACES = True
+HIDE_FOREIGN_RACES = False
 
 # Codes pays consideres comme "France" (l'API PMU utilise normalement "FRA").
 # Liste au cas ou un autre libelle serait renvoye pour certaines reunions.
@@ -208,7 +223,9 @@ class Tracker:
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
-        self.valuebet_seen = {}   # num -> {"delta": ..., "speed": ..., "at": ...} une fois bigmove ET vitesse rapide vrais EN MEME TEMPS (marquage definitif, comme bigmove_seen)
+        self.valuebet_seen = {}   # num -> {"pctChute": ..., "at": ...} une fois le seuil de chute franchi (marquage definitif)
+        self.tracking_started_at = None  # timestamp du debut du suivi de la course en cours (pour le delai avant snapshot T0)
+        self.snapshot_taken = False      # True des que le snapshot T0 a ete capture (bascule mode warm-up -> mode normal)
         self.last_reprog = 0.0
         self.last_save = 0.0
 
@@ -232,6 +249,8 @@ class Tracker:
                 "ema_last_t": self.ema_last_t,
                 "bigmove_seen": self.bigmove_seen,
                 "valuebet_seen": self.valuebet_seen,
+                "tracking_started_at": self.tracking_started_at,
+                "snapshot_taken": self.snapshot_taken,
                 "saved_at": time.time(),
             }
             tmp_path = STATE_FILE + ".tmp"
@@ -276,6 +295,12 @@ class Tracker:
         self.ema_last_t = snap.get("ema_last_t") or {}
         self.bigmove_seen = snap.get("bigmove_seen") or {}
         self.valuebet_seen = snap.get("valuebet_seen") or {}
+        self.tracking_started_at = snap.get("tracking_started_at")
+        # par defaut True (et pas False) pour la compatibilite avec un ancien
+        # fichier d'etat sans ce champ : on suppose que le snapshot avait deja
+        # ete pris (comportement d'origine) plutot que de relancer un warm-up
+        # en pleine course apres un redemarrage
+        self.snapshot_taken = snap.get("snapshot_taken", True)
         return self.selected_reunion is not None and self.selected_course is not None
 
     # -- programme -----------------------------------------------------
@@ -352,7 +377,9 @@ class Tracker:
         self.ema_last_t = {}
         self.bigmove_seen = {}
         self.valuebet_seen = {}
-        set_state(rows=[], snapLine="📸 Rapports probables : en attente")
+        self.tracking_started_at = time.time()
+        self.snapshot_taken = False
+        set_state(rows=[], snapLine="📸 Snapshot T0 en attente…")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -498,6 +525,31 @@ class Tracker:
             parts.append(f"{nb} partant{'s' if nb > 1 else ''}")
         return " · ".join(parts)
 
+    def build_warmup_rows(self, gagnant_map):
+        """Lignes affichees avant la capture du snapshot T0 : tous les
+        chevaux avec une cote live, tries du plus au moins favori (cote
+        decimale croissante), sans masquage ni badge (chute/vitesse/valuebet
+        n'ont pas de sens tant que T0 n'est pas fige)."""
+        rows = []
+        ordered = sorted(gagnant_map.items(), key=lambda kv: kv[1]["ratio"])
+        for num, info in ordered:
+            rows.append({
+                "num": num,
+                "nom": info["nom"],
+                "coteT0": None,
+                "coteLive": info["ratio"],
+                "pctChute": None,
+                "delta15": None,
+                "delta120": None,
+                "isFavori": bool(info.get("favoris")),
+                "isFast": False,
+                "isBigMove": False,
+                "isValuebet": False,
+                "speed": None,
+                "hidden": False,
+            })
+        return rows
+
     def handle_odds(self, data):
         gagnant_map = self.parse_participants(data)
         nums = set(gagnant_map.keys())
@@ -508,15 +560,47 @@ class Tracker:
             self.horse_names[num] = gagnant_map[num]["nom"]
             if num not in self.favoris_order:
                 self.favoris_order.append(num)
-            # Cote T0 = snapshot pris par le bot lui-meme : la toute premiere
-            # cote en direct observee pour ce cheval depuis le debut du suivi
-            # de cette course. Figee une fois pour toutes, jamais recalculee
-            # ensuite (meme si le cheval sort puis revient dans le tableau).
-            if num not in self.cote_t0:
-                self.cote_t0[num] = gagnant_map[num]["ratio"]
 
         now = time.time()
-        speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous
+        speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous (deja pendant le warm-up)
+
+        # -- capture (retardee) du snapshot T0 ---------------------------
+        # Le snapshot T0 n'est plus fige des le tout premier poll, mais
+        # seulement apres SNAPSHOT_WARMUP_S secondes de suivi. Avant cette
+        # capture, on affiche un mode "warm-up" : tous les chevaux, tries du
+        # plus au moins favori, avec un message d'attente ; pas de % de
+        # chute, pas de masquage, pas de badge (rien de tout ca n'a de sens
+        # tant que la reference T0 n'existe pas).
+        if not self.snapshot_taken:
+            warmup_elapsed = (
+                (now - self.tracking_started_at) if self.tracking_started_at is not None
+                else SNAPSHOT_WARMUP_S
+            )
+            if warmup_elapsed >= SNAPSHOT_WARMUP_S:
+                for num in nums:
+                    self.cote_t0.setdefault(num, gagnant_map[num]["ratio"])
+                self.snapshot_taken = True
+            else:
+                rows = self.build_warmup_rows(gagnant_map)
+                remaining = max(0.0, SNAPSHOT_WARMUP_S - warmup_elapsed)
+                now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
+                set_state(
+                    rows=rows,
+                    snapLine=f"📸 Snapshot T0 en attente… ({remaining:.0f}s) — {now_str}",
+                    toteLabel=self.build_tote_label(len(nums)),
+                    statusLine="",
+                    updatedAt=time.time(),
+                )
+                self.maybe_save_snapshot()
+                return
+
+        # Cote T0 = snapshot fige au moment de la bascule warm-up -> mode
+        # normal ci-dessus. Pour un cheval qui apparaitrait APRES coup (rare :
+        # partant declare tardivement), on prend sa toute premiere cote live
+        # comme reference, comme avant.
+        for num in nums:
+            if num not in self.cote_t0:
+                self.cote_t0[num] = gagnant_map[num]["ratio"]
 
         # Pour chaque cheval connu : cote Gagnant actuelle (brute, telle
         # qu'affichee par le PMU), probabilite lissee (EMA) il y a ~15s, et
@@ -597,17 +681,14 @@ class Tracker:
             is_bigmove = bigmove is not None
 
             # VALUEBET : marquage DEFINITIF, sur le meme principe que bigmove_seen.
-            # Des que 🔥 gros ecart (is_bigmove) ET ⚡ mouvement rapide (is_fast)
-            # sont vrais EN MEME TEMPS sur un cycle, le cheval reste marque
-            # "valuebet" pour le reste de la course — meme si sa vitesse
-            # retombe ensuite sous le seuil. Avant ce changement, le bandeau
-            # etait recalcule a chaque cycle cote client (isBigMove && isFast
-            # "live") et disparaissait des que isFast repassait a false ; il
-            # est maintenant fige cote serveur, source unique de verite.
-            if is_bigmove and is_fast:
+            # Des que la cote d'un cheval a chute (% Chute, ecart T0 -> Live)
+            # de VALUEBET_CHUTE_THRESHOLD_PCT (10%) ou plus, le cheval reste
+            # marque "valuebet" pour le reste de la course — meme si sa cote
+            # remonte ensuite. Fige cote serveur, source unique de verite.
+            if pct_chute is not None and pct_chute >= VALUEBET_CHUTE_THRESHOLD_PCT:
                 prev_vb = self.valuebet_seen.get(num)
                 if prev_vb is None:
-                    self.valuebet_seen[num] = {"delta": delta15, "speed": spd, "at": now}
+                    self.valuebet_seen[num] = {"pctChute": pct_chute, "at": now}
             is_valuebet = num in self.valuebet_seen
 
             # hors-plage = cote Gagnant en DIRECT en dehors de [COTE_RANGE_MIN,
