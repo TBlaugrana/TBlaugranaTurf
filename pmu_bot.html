@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>TBlaugrana Rang</title>
+<title>TBlaugrana Turf</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -204,7 +204,7 @@
   .table-wrap{ flex:1; }
   .table-head{
     display:grid;
-    grid-template-columns: 1fr 52px;
+    grid-template-columns: 1fr 60px;
     gap:8px;
     align-items:center;
     padding:0 12px 6px;
@@ -214,7 +214,7 @@
     color:var(--text-dim);
     font-weight:700;
   }
-  .table-head span:last-child{ text-align:right; }
+  .table-head span:last-child{ text-align:right; white-space:nowrap; }
 
   #rows{
     display:flex;
@@ -235,9 +235,8 @@
   .row.flash-up{ background:var(--success-bg); }
   .row.flash-down{ background:var(--danger-bg); }
 
-  /* Un seul signal visuel fort, réservé au cas où 🔥 gros écart ET
-     ⚡ mouvement rapide sont vrais EN MÊME TEMPS sur le même cheval.
-     Rien n'est affiché si un seul des deux critères est rempli. */
+  /* Un seul signal visuel fort, déclenché dès qu'un cheval a chuté de 10%
+     ou plus (% Chute, écart T0 -> Live), marquage définitif pour la course. */
   .row.row-valuebet{
     border:2px solid var(--tote-fg);
     background:linear-gradient(0deg, rgba(232,178,77,.12), rgba(232,178,77,.12)), var(--surface);
@@ -339,7 +338,7 @@
 <body>
 <div class="page">
 
-  <div class="brand-title">🐎 TBlaugrana Rang 🐎</div>
+  <div class="brand-title">🐎 TBlaugrana Turf 🐎</div>
 
   <div class="card" id="selectionCard">
     <div class="field">
@@ -472,6 +471,10 @@ function renderTable(rows){
     const coteT0Str = coteT0 !== undefined ? coteT0.toFixed(1) : "—";
     const coteLiveStr = coteLive !== undefined ? coteLive.toFixed(1) : "—";
     const pctChuteStr = pctChute !== undefined ? `${pctChute >= 0 ? '+' : ''}${pctChute.toFixed(1)}%` : "—";
+    // Avant la capture du snapshot T0 (mode "warm-up"), il n'y a pas encore
+    // de % de chute a afficher : on montre la cote Gagnant en direct a la
+    // place, ce qui permet quand meme de classer les chevaux par favoritisme.
+    const mainStr = pctChute !== undefined ? pctChuteStr : coteLiveStr;
 
     let row = rowEls[num];
     if(!row){
@@ -488,10 +491,10 @@ function renderTable(rows){
     if(rangEl.textContent !== rangStr) rangEl.textContent = rangStr;
 
     const coteEl = row.querySelector('.cote');
-    if(coteEl.textContent !== pctChuteStr){
-      coteEl.textContent = pctChuteStr;
+    if(coteEl.textContent !== mainStr){
+      coteEl.textContent = mainStr;
       const prevE = lastGagnant[num];
-      if(prevE !== undefined && pctChute !== undefined && pctChute !== prevE){
+      if(pctChute !== undefined && prevE !== undefined && pctChute !== prevE){
         row.classList.remove('flash-up','flash-down');
         void row.offsetWidth;
         // % de chute qui augmente = cote qui chute encore plus (favorable)
@@ -501,7 +504,9 @@ function renderTable(rows){
       }
     }
     if(pctChute !== undefined) lastGagnant[num] = pctChute;
-    coteEl.title = "% de chute entre la cote au moment du snapshot (T0) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le début du suivi";
+    coteEl.title = pctChute !== undefined
+      ? "% de chute entre la cote au moment du snapshot (T0) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le début du suivi"
+      : "Cote Gagnant en direct — classement du plus au moins favori, snapshot T0 pas encore pris";
 
     // Cote T0 : valeur de référence figée, affichage neutre (ne "flashe" pas)
     const deltaEl = row.querySelector('.var');
@@ -532,14 +537,11 @@ function renderTable(rows){
     // quand la vitesse retombe ensuite sous le seuil. Le cheval reste aussi
     // visible dans le tableau (masquage par rang ignoré côté serveur pour
     // les chevaux bigmove/valuebet).
-    const delta120 = (r.delta120 === null || r.delta120 === undefined) ? undefined : r.delta120;
     const isBigMove = !!r.isBigMove;
     const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
-      const deltaTxt = delta120 !== undefined ? `${delta120 >= 0 ? '+' : ''}${delta120.toFixed(1)}%` : '—';
-      const spdTxt = spd !== undefined ? `${spd >= 0 ? '+' : ''}${spd.toFixed(1)}%/min` : '—';
-      valuebetEl.title = `Gros écart (${deltaTxt}) + mouvement rapide (${spdTxt}) en même temps`;
+      valuebetEl.title = `Chute de ${pctChuteStr} depuis le snapshot T0 (seuil de déclenchement : 10%)`;
     }
     row.classList.toggle('row-valuebet', isValuebet);
 
@@ -585,8 +587,10 @@ function applyState(data){
 
   if(data.snapLine){
     snapLineEl.textContent = data.snapLine;
+    snapLineEl.style.display = '';
+  } else {
+    snapLineEl.style.display = 'none';
   }
-  snapLineEl.style.display = 'none';
 
   if(data.statusLine){
     statusLineEl.textContent = data.statusLine;
