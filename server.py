@@ -100,7 +100,8 @@ BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la der
 
 # Seuil de declenchement du signal VALUEBET : des que la cote d'un cheval a
 # chute (pctChute, colonne "% Chute", ecart T0 -> Live) de 10% ou plus, il
-# est marque valuebet de facon DEFINITIVE (comme bigmove), independamment de
+# est marque valuebet. Ce marquage est RETIRE des que pctChute repasse sous
+# ce seuil (contrairement a bigmove qui reste definitif), independamment de
 # la vitesse de variation ou d'une fenetre de temps avant le depart.
 VALUEBET_CHUTE_THRESHOLD_PCT = 10.0
 
@@ -688,19 +689,19 @@ class Tracker:
             # est par ailleurs marque bigmove/valuebet (priorite absolue)
             is_remonte = pct_chute is not None and pct_chute < 0
 
-            # VALUEBET : marquage normalement DEFINITIF (comme bigmove_seen)
-            # des que la cote d'un cheval a chute (% Chute, ecart T0 -> Live)
-            # de VALUEBET_CHUTE_THRESHOLD_PCT (10%) ou plus. EXCEPTION : si la
-            # cote "remonte" ensuite (pct_chute redevient negatif), le
-            # marquage valuebet est retire (pas seulement masque) — le cheval
-            # perd son statut valuebet. S'il rechute a nouveau a 10%+ par la
-            # suite, il peut redevenir valuebet.
-            if is_remonte:
-                self.valuebet_seen.pop(num, None)
-            elif pct_chute is not None and pct_chute >= VALUEBET_CHUTE_THRESHOLD_PCT:
+            # VALUEBET : marquage actif tant que la cote d'un cheval a chute
+            # (% Chute, ecart T0 -> Live) de VALUEBET_CHUTE_THRESHOLD_PCT (10%)
+            # ou plus. Des que pct_chute repasse sous ce seuil (meme encore
+            # positif, ex. 12% -> 8%, ou negatif si la cote remonte au-dessus
+            # de T0), le marquage valuebet est retire — le cheval perd son
+            # statut valuebet. S'il rechute a nouveau a 10%+ par la suite, il
+            # peut redevenir valuebet.
+            if pct_chute is not None and pct_chute >= VALUEBET_CHUTE_THRESHOLD_PCT:
                 prev_vb = self.valuebet_seen.get(num)
                 if prev_vb is None:
                     self.valuebet_seen[num] = {"pctChute": pct_chute, "at": now}
+            else:
+                self.valuebet_seen.pop(num, None)
             is_valuebet = num in self.valuebet_seen
 
             # hors-plage = cote Gagnant en DIRECT en dehors de [COTE_RANGE_MIN,
@@ -830,5 +831,3 @@ if __name__ == "__main__":
     with ThreadingHTTPServer(("0.0.0.0", PORT), Handler) as httpd:
         print(f"Serveur lance sur le port {PORT} (suivi PMU actif en tache de fond)")
         httpd.serve_forever()
-
-
