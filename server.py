@@ -220,6 +220,7 @@ def build_valuebet_csv():
     writer.writerow([
         "date", "reunion", "course", "label", "hippodrome", "paysCode", "paysLabel", "etrangere",
         "loggedAt", "num", "nom", "coteT0", "pctChuteAuMarquage", "marqueAt",
+        "coteLiveFinale", "pctChuteFinale",
         "dividendeGagnant", "dividendePlace", "rapportsType", "rapportsRawJson",
     ])
     try:
@@ -257,6 +258,8 @@ def build_valuebet_csv():
                         h.get("coteT0", ""),
                         h.get("pctChuteAuMarquage", ""),
                         marque_at_str,
+                        h.get("coteLiveFinale", ""),
+                        h.get("pctChuteFinale", ""),
                         extract_dividende(rapports, num, "GAGNANT"),
                         extract_dividende(rapports, num, "PLACE"),
                         entry.get("rapportsType", ""),
@@ -377,6 +380,7 @@ class Tracker:
         self.favoris_order = []   # ordre de suivi des chevaux (num en string)
         self.horse_names = {}
         self.cote_t0 = {}         # num -> cote Gagnant (%) au moment du snapshot T0 (1ere cote vue pour ce cheval sur cette course)
+        self.cote_live_last = {}  # num -> derniere cote Gagnant live connue (mise a jour a chaque poll) ; sert a capturer la "cote finale" au moment de la bascule de course
         self.odds_history = {}    # num -> [(t, prob_lissee_ema), ...]
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
@@ -521,15 +525,27 @@ class Tracker:
     def capture_valuebet_snapshot(self):
         """Fige la liste des chevaux actuellement marques valuebet sur la
         course en cours, avec de quoi les identifier et calculer un ROI
-        ensuite (num, nom, cote T0, % de chute au moment du marquage)."""
+        ensuite. Fournit deux photos de la cote de chaque cheval :
+        - au moment ou le signal valuebet s'est declenche pour la premiere
+          fois (pctChuteAuMarquage, fige des ce moment-la, cf. valuebet_seen) ;
+        - juste avant la bascule vers la course suivante, donc proche du
+          depart reel (coteLiveFinale / pctChuteFinale), recalculee ici a
+          partir de la derniere cote live vue (cote_live_last)."""
         horses = []
         for num, info in self.valuebet_seen.items():
+            cote_t0 = self.cote_t0.get(num)
+            cote_live_finale = self.cote_live_last.get(num)
+            pct_chute_finale = None
+            if cote_t0 is not None and cote_live_finale is not None and cote_t0 > 0:
+                pct_chute_finale = (cote_t0 - cote_live_finale) / cote_t0 * 100
             horses.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
-                "coteT0": self.cote_t0.get(num),
+                "coteT0": cote_t0,
                 "pctChuteAuMarquage": info.get("pctChute"),
                 "marqueAt": info.get("at"),
+                "coteLiveFinale": cote_live_finale,
+                "pctChuteFinale": pct_chute_finale,
             })
         return horses
 
@@ -642,7 +658,7 @@ class Tracker:
         self.favoris_order = []
         self.horse_names = {}
         self.cote_t0 = {}
-        self.odds_history = {}
+        self.cote_live_last = {}
         self.ema_prob = {}
         self.ema_last_t = {}
         self.bigmove_seen = {}
@@ -902,6 +918,8 @@ class Tracker:
 
             cote_t0 = self.cote_t0.get(num)
             cote_live = cote_g
+            if cote_live is not None:
+                self.cote_live_last[num] = cote_live
             pct_chute = None
             if cote_t0 is not None and cote_live is not None and cote_t0 > 0:
                 # % de chute entre T0 et Live : positif = la cote a baisse
