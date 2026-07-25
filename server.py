@@ -29,6 +29,7 @@ import math
 import os
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -115,7 +116,7 @@ HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
 # a la selection automatique et n'apparaissent jamais dans l'etat renvoye
 # au bot). Mettre a False pour revenir au comportement d'origine (toutes
 # les reunions, France + etranger).
-HIDE_FOREIGN_RACES = False
+HIDE_FOREIGN_RACES = True
 
 # Codes pays consideres comme "France" (l'API PMU utilise normalement "FRA").
 # Liste au cas ou un autre libelle serait renvoye pour certaines reunions.
@@ -217,8 +218,8 @@ def build_valuebet_csv():
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
-        "date", "reunion", "course", "label", "loggedAt",
-        "num", "nom", "coteT0", "pctChuteAuMarquage", "marqueAt",
+        "date", "reunion", "course", "label", "hippodrome", "paysCode", "paysLabel", "etrangere",
+        "loggedAt", "num", "nom", "coteT0", "pctChuteAuMarquage", "marqueAt",
         "dividendeGagnant", "dividendePlace", "rapportsType", "rapportsRawJson",
     ])
     try:
@@ -246,6 +247,10 @@ def build_valuebet_csv():
                         entry.get("reunion", ""),
                         entry.get("course", ""),
                         entry.get("label", ""),
+                        entry.get("hippodrome", ""),
+                        entry.get("paysCode", ""),
+                        entry.get("paysLabel", ""),
+                        entry.get("etrangere", ""),
                         logged_at_str,
                         num,
                         h.get("nom", ""),
@@ -467,12 +472,19 @@ class Tracker:
             hippo = ru.get("hippodrome") or {}
             hip = hippo.get("libelleCourt") or hippo.get("libelleLong") or f"R{ru.get('numOfficiel')}"
             num_reunion = ru.get("numOfficiel")
+            pays = ru.get("pays") if isinstance(ru.get("pays"), dict) else {}
+            pays_code = (pays.get("code") or "").strip().upper()
+            pays_label = pays.get("libelleLong") or pays.get("libelleCourt") or pays_code
+            etrangere = is_etrangere(ru)
             for co in (ru.get("courses") or []):
                 if is_annulee(co):
                     continue
                 courses.append({
                     "numReunion": num_reunion,
                     "hip": hip,
+                    "paysCode": pays_code,
+                    "paysLabel": pays_label,
+                    "etrangere": etrangere,
                     "course": co.get("numOrdre"),
                     "depart": co.get("heureDepart"),
                     "libelle": co.get("libelle") or co.get("libelleCourt") or f"Course {co.get('numOrdre')}",
@@ -521,13 +533,20 @@ class Tracker:
             })
         return horses
 
-    def log_race_valuebets_async(self, date_str, reunion, course, label, horses):
+    def log_race_valuebets_async(self, date_str, reunion, course, label, horses, course_info=None):
         """Lance en tache de fond (thread separe, ne bloque jamais la boucle
         de suivi) la recuperation des rapports definitifs de la course
         qu'on vient de quitter, puis ecrit une ligne JSON dans le journal.
-        Ne fait rien si aucun cheval n'etait marque valuebet (rien a logger)."""
+        Ne fait rien si aucun cheval n'etait marque valuebet (rien a logger).
+        course_info (dict issu de self.all_courses, optionnel) fournit le
+        pays/hippodrome pour pouvoir filtrer les courses etrangeres plus
+        tard sans devoir re-parser le programme."""
         if not horses:
             return
+        hippodrome = (course_info or {}).get("hip")
+        pays_code = (course_info or {}).get("paysCode")
+        pays_label = (course_info or {}).get("paysLabel")
+        etrangere = (course_info or {}).get("etrangere")
 
         def worker():
             rapports = None
@@ -567,6 +586,10 @@ class Tracker:
                 "reunion": reunion,
                 "course": course,
                 "label": label,
+                "hippodrome": hippodrome,
+                "paysCode": pays_code,
+                "paysLabel": pays_label,
+                "etrangere": etrangere,  # True/False/None (None si info indisponible)
                 "valuebetHorses": horses,
                 "rapports": rapports,           # None si toujours indisponible malgre les tentatives
                 "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
@@ -596,8 +619,14 @@ class Tracker:
             prev_horses = self.capture_valuebet_snapshot()
             prev_label = f"R{self.selected_reunion}C{self.selected_course}"
             prev_date = date_pmu(datetime.now(PARIS_TZ))
+            prev_course_info = next(
+                (c for c in self.all_courses
+                 if c["numReunion"] == self.selected_reunion and c["course"] == self.selected_course),
+                None,
+            )
             self.log_race_valuebets_async(
-                prev_date, self.selected_reunion, self.selected_course, prev_label, prev_horses
+                prev_date, self.selected_reunion, self.selected_course, prev_label, prev_horses,
+                prev_course_info,
             )
 
         self.selected_reunion = chosen["numReunion"]
@@ -1038,6 +1067,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_state()
         elif self.path.startswith("/api/valuebet-log.csv"):
             self.handle_valuebet_csv()
+        elif self.path.startswith("/api/valuebet-log/reset"):
+            self.handle_valuebet_reset()
         elif self.path == "/":
             self.path = "/pmu_bot.html"
             super().do_GET()
@@ -1051,6 +1082,35 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Content-Disposition", 'attachment; filename="valuebet_log.csv"')
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_valuebet_reset(self):
+        # Protection minimale contre un declenchement accidentel (lien
+        # partage par erreur, crawler, etc.) : il faut explicitement
+        # ?confirm=oui dans l'URL pour que la suppression ait lieu. Un simple
+        # GET sur /api/valuebet-log/reset (sans ce parametre) affiche juste
+        # un message d'aide, sans rien supprimer.
+        query = urllib.parse.urlsplit(self.path).query
+        params = urllib.parse.parse_qs(query)
+        confirmed = params.get("confirm", [""])[0].lower() in ("oui", "yes", "1", "true")
+        if not confirmed:
+            body = ("Rien supprime. Ajoute ?confirm=oui a l'URL pour "
+                    "confirmer la remise a zero du journal valuebet.").encode("utf-8")
+            self.send_response(200)
+        else:
+            try:
+                with VALUEBET_LOG_LOCK:
+                    open(VALUEBET_LOG_FILE, "w", encoding="utf-8").close()
+                body = "Journal valuebet remis a zero.".encode("utf-8")
+                self.send_response(200)
+                print("[VALUEBET-LOG] journal remis a zero via /api/valuebet-log/reset")
+            except Exception as e:
+                body = f"Echec de la remise a zero : {e}".encode("utf-8")
+                self.send_response(500)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
