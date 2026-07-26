@@ -219,8 +219,9 @@ def build_valuebet_csv():
     writer = csv.writer(buf)
     writer.writerow([
         "date", "reunion", "course", "label", "hippodrome", "paysCode", "paysLabel", "etrangere", "discipline",
+        "nbPartants", "heureDepart", "nbValuebetsSimultanes",
         "loggedAt", "num", "nom", "coteT0", "pctChuteAuMarquage", "marqueAt",
-        "coteLiveFinale", "pctChuteFinale",
+        "coteLiveFinale", "pctChuteFinale", "delaiSignalDepartMin", "classementFinal",
         "dividendeGagnant", "dividendePlace", "rapportsType", "rapportsRawJson",
     ])
     try:
@@ -253,6 +254,9 @@ def build_valuebet_csv():
                         entry.get("paysLabel", ""),
                         entry.get("etrangere", ""),
                         entry.get("discipline", ""),
+                        entry.get("nbPartants", ""),
+                        entry.get("heureDepart", ""),
+                        entry.get("nbValuebetsSimultanes", ""),
                         logged_at_str,
                         num,
                         h.get("nom", ""),
@@ -261,6 +265,8 @@ def build_valuebet_csv():
                         marque_at_str,
                         h.get("coteLiveFinale", ""),
                         h.get("pctChuteFinale", ""),
+                        h.get("delaiSignalDepartMin", ""),
+                        h.get("classementFinal", ""),
                         extract_dividende(rapports, num, "GAGNANT"),
                         extract_dividende(rapports, num, "PLACE"),
                         entry.get("rapportsType", ""),
@@ -341,6 +347,40 @@ def fetch_rapports_provisoires(date_str, reunion, course):
     path = (f"{PMU_CIT_PREFIX}programme/{date_str}/R{reunion}/C{course}"
             f"/rapports-provisoires?specialisation=OFFLINE")
     return http_get_json(PMU_CIT_HOST, path)
+
+
+def fetch_participants_arrivee(date_str, reunion, course):
+    """Recupere l'endpoint /participants une fois la course terminee : il
+    expose normalement le classement final de chaque partant (en plus des
+    cotes, deja utilisees ailleurs pour le suivi en direct)."""
+    path = (f"{PMU_CIT_PREFIX}programme/{date_str}/R{reunion}/C{course}"
+            f"/participants?specialisation=OFFLINE")
+    return http_get_json(PMU_CIT_HOST, path)
+
+
+def extract_classement(participants_data, num):
+    """Cherche le classement final (position d'arrivee) d'un cheval dans la
+    reponse /participants post-course. Best-effort, comme extract_dividende :
+    je n'ai pas pu verifier le nom exact du champ sur un payload PMU reel une
+    fois la course terminee, donc plusieurs noms de champs plausibles sont
+    essayes. Renvoie None si rien ne matche (le cheval reste alors identifie
+    seulement via dividendeGagnant/dividendePlace, qui eux sont confirmes
+    fonctionner)."""
+    if not isinstance(participants_data, dict):
+        return None
+    classement_keys = ("ordreArrivee", "place", "rang", "position", "classement", "numeroOrdreArrivee")
+    try:
+        for p in (participants_data.get("participants") or []):
+            if not isinstance(p, dict):
+                continue
+            if str(p.get("numPmu")) != str(num):
+                continue
+            for k in classement_keys:
+                if p.get(k) is not None:
+                    return p[k]
+    except Exception:
+        return None
+    return None
 
 
 def is_annulee(obj):
@@ -539,14 +579,19 @@ class Tracker:
             pct_chute_finale = None
             if cote_t0 is not None and cote_live_finale is not None and cote_t0 > 0:
                 pct_chute_finale = (cote_t0 - cote_live_finale) / cote_t0 * 100
+            marque_at = info.get("at")
+            delai_signal_depart_min = None
+            if marque_at is not None and self.depart_ts is not None:
+                delai_signal_depart_min = (self.depart_ts - marque_at) / 60.0
             horses.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
                 "coteT0": cote_t0,
                 "pctChuteAuMarquage": info.get("pctChute"),
-                "marqueAt": info.get("at"),
+                "marqueAt": marque_at,
                 "coteLiveFinale": cote_live_finale,
                 "pctChuteFinale": pct_chute_finale,
+                "delaiSignalDepartMin": delai_signal_depart_min,
             })
         return horses
 
@@ -565,6 +610,11 @@ class Tracker:
         pays_label = (course_info or {}).get("paysLabel")
         etrangere = (course_info or {}).get("etrangere")
         discipline = (course_info or {}).get("discipline")
+        nb_partants = (course_info or {}).get("nbPartants")
+        depart_ms = (course_info or {}).get("depart")
+        heure_depart = (datetime.fromtimestamp(depart_ms / 1000.0, tz=PARIS_TZ).isoformat()
+                         if depart_ms else None)
+        nb_valuebets_simultanes = len(horses)
 
         def worker():
             rapports = None
@@ -598,6 +648,16 @@ class Tracker:
                 print(f"[VALUEBET-LOG] {label} : rapports {rapports_type} recuperes avec succes "
                       f"({len(horses)} cheval(aux) valuebet)")
 
+            # Classement final (best-effort, cf. extract_classement) : recupere
+            # une seule fois pour la course, puis assigne a chaque cheval.
+            participants_data = None
+            try:
+                participants_data = fetch_participants_arrivee(date_str, reunion, course)
+            except Exception as e:
+                print(f"[VALUEBET-LOG] {label} : echec recuperation classement final : {e!r}")
+            for h in horses:
+                h["classementFinal"] = extract_classement(participants_data, h["num"])
+
             entry = {
                 "loggedAt": time.time(),
                 "date": date_str,
@@ -609,6 +669,9 @@ class Tracker:
                 "paysLabel": pays_label,
                 "etrangere": etrangere,  # True/False/None (None si info indisponible)
                 "discipline": discipline,  # "TROT", "PLAT", "OBSTACLE"... (tel que fourni par l'API PMU)
+                "nbPartants": nb_partants,
+                "heureDepart": heure_depart,
+                "nbValuebetsSimultanes": nb_valuebets_simultanes,
                 "valuebetHorses": horses,
                 "rapports": rapports,           # None si toujours indisponible malgre les tentatives
                 "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
