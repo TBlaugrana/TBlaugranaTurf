@@ -218,7 +218,7 @@ def build_valuebet_csv():
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
-        "date", "reunion", "course", "label", "hippodrome", "paysCode", "paysLabel", "etrangere",
+        "date", "reunion", "course", "label", "hippodrome", "paysCode", "paysLabel", "etrangere", "discipline",
         "loggedAt", "num", "nom", "coteT0", "pctChuteAuMarquage", "marqueAt",
         "coteLiveFinale", "pctChuteFinale",
         "dividendeGagnant", "dividendePlace", "rapportsType", "rapportsRawJson",
@@ -252,6 +252,7 @@ def build_valuebet_csv():
                         entry.get("paysCode", ""),
                         entry.get("paysLabel", ""),
                         entry.get("etrangere", ""),
+                        entry.get("discipline", ""),
                         logged_at_str,
                         num,
                         h.get("nom", ""),
@@ -563,6 +564,7 @@ class Tracker:
         pays_code = (course_info or {}).get("paysCode")
         pays_label = (course_info or {}).get("paysLabel")
         etrangere = (course_info or {}).get("etrangere")
+        discipline = (course_info or {}).get("discipline")
 
         def worker():
             rapports = None
@@ -606,6 +608,7 @@ class Tracker:
                 "paysCode": pays_code,
                 "paysLabel": pays_label,
                 "etrangere": etrangere,  # True/False/None (None si info indisponible)
+                "discipline": discipline,  # "TROT", "PLAT", "OBSTACLE"... (tel que fourni par l'API PMU)
                 "valuebetHorses": horses,
                 "rapports": rapports,           # None si toujours indisponible malgre les tentatives
                 "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
