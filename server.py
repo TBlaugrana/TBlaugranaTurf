@@ -71,7 +71,7 @@ GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progre
 # reelle). Reevalue a CHAQUE poll sur la cote LIVE : un cheval qui rentre
 # dans la plage apparait immediatement, un cheval qui en sort disparait
 # immediatement (pas de marquage definitif, contrairement a bigmove/valuebet).
-COTE_RANGE_MIN = 6.0
+COTE_RANGE_MIN = 0.0
 COTE_RANGE_MAX = 20.0
 
 # Lissage exponentiel (EMA) applique a la probabilite implicite (Gagnant) avant
