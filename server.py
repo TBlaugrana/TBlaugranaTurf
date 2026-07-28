@@ -534,6 +534,260 @@ def is_etrangere(reunion):
         return False
     return code not in FRANCE_COUNTRY_CODES
 
+def log_odds_timeseries_async(date_str, reunion, course, label,
+                           timeseries_buffer, horse_names, course_info=None):
+    """Ecrit en tache de fond le journal des series temporelles de
+    cotes (fichier SEPARE, ODDS_TIMESERIES_LOG_FILE) : un point toutes
+    les 15s pour chaque cheval en chute (0 a 200%) entre T-5min et
+    T+5min (T = heure de depart PROGRAMMEE). Attend aussi le classement
+    final (best-effort, cf. extract_classement) avant d'ecrire, comme
+    pour le journal valuebet — mais dans un thread separe, pour ne pas
+    dependre l'un de l'autre ni bloquer le suivi en direct."""
+    if not timeseries_buffer:
+        return
+    hippodrome = (course_info or {}).get("hip")
+    discipline = (course_info or {}).get("discipline")
+    nb_partants = (course_info or {}).get("nbPartants")
+    pays_code = (course_info or {}).get("paysCode")
+    pays_label = (course_info or {}).get("paysLabel")
+    etrangere = (course_info or {}).get("etrangere")
+    depart_ms = (course_info or {}).get("depart")
+    heure_depart = (datetime.fromtimestamp(depart_ms / 1000.0, tz=PARIS_TZ).isoformat()
+                     if depart_ms else None)
+
+    def worker():
+        participants_data = None
+        try:
+            for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
+                participants_data = fetch_participants_arrivee(date_str, reunion, course)
+                if participants_data and extract_classement(participants_data, next(iter(timeseries_buffer))):
+                    break
+                time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
+        except Exception as e:
+            print(f"[ODDS-TS-LOG] {label} : echec recuperation classement : {e!r}")
+
+        # Rapports (dividendes definitifs, avec repli provisoires) : meme
+        # logique que le journal valuebet, pour que CHAQUE cheval de ce
+        # journal (pas seulement ceux marques valuebet) ait son resultat
+        # Gagnant/Place final.
+        rapports = None
+        rapports_type = None
+        try:
+            rapports = fetch_rapports_definitifs(date_str, reunion, course)
+            if rapports:
+                rapports_type = "definitifs"
+        except Exception as e:
+            print(f"[ODDS-TS-LOG] {label} : echec recuperation rapports definitifs : {e!r}")
+        if rapports is None:
+            try:
+                rapports = fetch_rapports_provisoires(date_str, reunion, course)
+                if rapports:
+                    rapports_type = "provisoires"
+            except Exception as e:
+                print(f"[ODDS-TS-LOG] {label} : echec recuperation rapports provisoires : {e!r}")
+
+        # Rang de cote dans le peloton complet (1 = favori officiel de la
+        # course = cote finale la plus basse), fusionne ici depuis
+        # l'ancien journal race_snapshot : calcule a partir de la
+        # derniere cote live connue de chaque cheval (dernier sample).
+        cote_finale_par_num = {num: samples[-1]["coteLive"] for num, samples in timeseries_buffer.items() if samples}
+        ranked = sorted(cote_finale_par_num.items(), key=lambda kv: kv[1])
+        rang_par_num = {num: i + 1 for i, (num, _) in enumerate(ranked)}
+
+        horses = []
+        for num, samples in timeseries_buffer.items():
+            cote_finale = cote_finale_par_num.get(num)
+            cote_t0 = samples[0]["coteT0"] if samples else None
+            horses.append({
+                "num": num,
+                "nom": horse_names.get(num, f"#{num}"),
+                "coteT0": cote_t0,
+                "coteFinale": cote_finale,
+                "rangCoteFinale": rang_par_num.get(num),  # 1 = favori officiel de la course
+                "classementFinal": extract_classement(participants_data, num),
+                "dividendeGagnant": extract_dividende(rapports, num, "GAGNANT"),
+                "dividendePlace": extract_dividende(rapports, num, "PLACE"),
+                "samples": samples,  # [{"t":..., "coteT0":..., "coteLive":..., "pctChute":...}, ...]
+            })
+
+        entry = {
+            "loggedAt": time.time(),
+            "date": date_str,
+            "reunion": reunion,
+            "course": course,
+            "label": label,
+            "hippodrome": hippodrome,
+            "paysCode": pays_code,
+            "paysLabel": pays_label,
+            "etrangere": etrangere,
+            "discipline": discipline,
+            "nbPartants": nb_partants,
+            "heureDepart": heure_depart,
+            "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
+            "sampleIntervalS": ODDS_TIMESERIES_SAMPLE_INTERVAL_S,
+            "windowBeforeS": ODDS_TIMESERIES_WINDOW_BEFORE_S,
+            "windowAfterS": ODDS_TIMESERIES_WINDOW_AFTER_S,
+            "horses": horses,
+        }
+        try:
+            with ODDS_TIMESERIES_LOG_LOCK:
+                with open(ODDS_TIMESERIES_LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            print(f"[ODDS-TS-LOG] {label} : {len(horses)} cheval(aux), "
+                  f"{sum(len(h['samples']) for h in horses)} points au total")
+        except Exception as e:
+            print(f"[ODDS-TS-LOG] echec ecriture journal : {e}")
+
+
+# ---------------------------------------------------------------------------
+# Etat interne du suivi (accede uniquement depuis le thread tracker_loop,
+# jamais concurremment -> pas besoin de verrou ici)
+# ---------------------------------------------------------------------------
+def parse_participants_data(data):
+    """Version standalone (stateless) de Tracker.parse_participants,
+    dupliquee volontairement pour LookaheadOddsLogger : evite de toucher a
+    quoi que ce soit dans la classe Tracker existante (a la demande
+    explicite de l'utilisateur de ne pas changer le fonctionnement du bot).
+    Lit l'endpoint /participants : chaque partant y expose sa cote Gagnant
+    en direct (dernierRapportDirect.rapport)."""
+    gagnant_map = {}
+    for p in (data.get("participants") or []):
+        if p.get("statut") != "PARTANT":
+            continue
+        direct = p.get("dernierRapportDirect") or {}
+        rapport_direct = direct.get("rapport")
+        if rapport_direct is None:
+            continue
+        num = str(p.get("numPmu"))
+        gagnant_map[num] = {
+            "nom": p.get("nom") or f"#{num}",
+            "ratio": rapport_direct,
+        }
+    return gagnant_map
+
+
+class LookaheadOddsLogger:
+    """Suivi INDEPENDANT et EN PARALLELE du Tracker principal. Seul but :
+    alimenter le journal odds_timeseries avec la portion AVANT le depart
+    (T-5min) que le Tracker principal rate souvent en pratique -- il ne
+    bascule vers la course suivante qu'apres que la precedente devienne
+    perimee (RACE_STALE_S = 6min apres son propre depart), donc il arrive
+    parfois sur la course suivante alors que celle-ci a deja son propre
+    depart officiel passe, ratant toute la fenetre "avant course".
+
+    IMPORTANT : ce mecanisme ne touche a AUCUN etat du Tracker principal
+    (cote_t0, valuebet_seen, selected_reunion, l'affichage /api/state,
+    etc.). Il lit seulement tracker.all_courses en lecture seule (deja mis
+    a jour par le Tracker principal) et fait ses propres requetes HTTP
+    independantes, dans son propre thread. Zero impact sur le comportement
+    existant du bot -- uniquement une source supplementaire de donnees pour
+    le meme journal odds_timeseries.jsonl (via log_odds_timeseries_async,
+    la meme fonction que le Tracker principal utilise)."""
+
+    def __init__(self, tracker):
+        self.tracker = tracker
+        self.current_key = None          # (reunion, course) actuellement suivie en avance
+        self.current_course_info = None
+        self.buffer = defaultdict(list)  # num -> [{"t":..., "coteT0":..., "coteLive":..., "pctChute":...}, ...]
+        self.horse_names = {}
+        self.last_sample_ts = 0.0
+        self.flushed_keys = set()        # eviter de logguer deux fois la meme course
+
+    def pick_target_course(self):
+        """Choisit, parmi tracker.all_courses, la course la plus proche dans
+        le temps dont on est dans la fenetre [depart-5min, depart+5min] et
+        qui n'a pas deja ete flushee par ce mecanisme."""
+        now = time.time()
+        candidates = []
+        for c in self.tracker.all_courses:
+            depart_ms = c.get("depart")
+            if not depart_ms:
+                continue
+            key = (c["numReunion"], c["course"])
+            if key in self.flushed_keys:
+                continue
+            depart_s = depart_ms / 1000.0
+            if (depart_s - ODDS_TIMESERIES_WINDOW_BEFORE_S) <= now <= (depart_s + ODDS_TIMESERIES_WINDOW_AFTER_S):
+                candidates.append(c)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c["depart"])
+        return candidates[0]
+
+    def flush_current(self):
+        if self.current_key is not None and self.buffer:
+            reunion, course = self.current_key
+            label = f"R{reunion}C{course}"
+            date_str = date_pmu(datetime.now(PARIS_TZ))
+            log_odds_timeseries_async(date_str, reunion, course, label,
+                                       dict(self.buffer), dict(self.horse_names),
+                                       self.current_course_info)
+            self.flushed_keys.add(self.current_key)
+        self.buffer = defaultdict(list)
+        self.horse_names = {}
+
+    def poll_once(self):
+        target = self.pick_target_course()
+        if target is None:
+            if self.current_key is not None:
+                self.flush_current()
+                self.current_key = None
+                self.current_course_info = None
+            return
+
+        key = (target["numReunion"], target["course"])
+        if key != self.current_key:
+            self.flush_current()
+            self.current_key = key
+            self.current_course_info = target
+            self.last_sample_ts = 0.0
+
+        reunion, course = key
+        date_str = date_pmu(datetime.now(PARIS_TZ))
+        path = (f"{PMU_CIT_PREFIX}programme/{date_str}/R{reunion}/C{course}"
+                f"/participants?specialisation=OFFLINE")
+        try:
+            data = http_get_json(PMU_CIT_HOST, path)
+        except Exception as e:
+            print(f"[LOOKAHEAD] R{reunion}C{course} : erreur fetch cotes : {e!r}")
+            return
+
+        gagnant_map = parse_participants_data(data)
+        if not gagnant_map:
+            return
+        for num, info in gagnant_map.items():
+            self.horse_names[num] = info["nom"]
+
+        now = time.time()
+        if (now - self.last_sample_ts) < ODDS_TIMESERIES_SAMPLE_INTERVAL_S:
+            return
+        self.last_sample_ts = now
+
+        for num, info in gagnant_map.items():
+            cote_live = info.get("ratio")
+            if cote_live is None:
+                continue
+            existing = self.buffer.get(num)
+            # coteT0 "locale" a ce mini-suivi en avance : la 1ere cote vue
+            # pour ce cheval ICI (peut differer legerement du coteT0 du
+            # Tracker principal, qui demarre son propre suivi plus tard).
+            cote_t0 = existing[0]["coteT0"] if existing else cote_live
+            pct_chute = ((cote_t0 - cote_live) / cote_t0 * 100) if cote_t0 else None
+            self.buffer[num].append({
+                "t": now,
+                "coteT0": cote_t0,
+                "coteLive": cote_live,
+                "pctChute": pct_chute,
+            })
+
+    def run_forever(self):
+        while True:
+            try:
+                self.poll_once()
+            except Exception as e:
+                print(f"[LOOKAHEAD] erreur boucle : {e!r}")
+            time.sleep(2.0)  # frequence plus lache que le Tracker principal (0.5s), pour limiter la charge API additionnelle
+
 
 # ---------------------------------------------------------------------------
 # Etat interne du suivi (accede uniquement depuis le thread tracker_loop,
@@ -817,111 +1071,6 @@ class Tracker:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def log_odds_timeseries_async(self, date_str, reunion, course, label,
-                                   timeseries_buffer, horse_names, course_info=None):
-        """Ecrit en tache de fond le journal des series temporelles de
-        cotes (fichier SEPARE, ODDS_TIMESERIES_LOG_FILE) : un point toutes
-        les 15s pour chaque cheval en chute (0 a 200%) entre T-5min et
-        T+5min (T = heure de depart PROGRAMMEE). Attend aussi le classement
-        final (best-effort, cf. extract_classement) avant d'ecrire, comme
-        pour le journal valuebet — mais dans un thread separe, pour ne pas
-        dependre l'un de l'autre ni bloquer le suivi en direct."""
-        if not timeseries_buffer:
-            return
-        hippodrome = (course_info or {}).get("hip")
-        discipline = (course_info or {}).get("discipline")
-        nb_partants = (course_info or {}).get("nbPartants")
-        pays_code = (course_info or {}).get("paysCode")
-        pays_label = (course_info or {}).get("paysLabel")
-        etrangere = (course_info or {}).get("etrangere")
-        depart_ms = (course_info or {}).get("depart")
-        heure_depart = (datetime.fromtimestamp(depart_ms / 1000.0, tz=PARIS_TZ).isoformat()
-                         if depart_ms else None)
-
-        def worker():
-            participants_data = None
-            try:
-                for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
-                    participants_data = fetch_participants_arrivee(date_str, reunion, course)
-                    if participants_data and extract_classement(participants_data, next(iter(timeseries_buffer))):
-                        break
-                    time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
-            except Exception as e:
-                print(f"[ODDS-TS-LOG] {label} : echec recuperation classement : {e!r}")
-
-            # Rapports (dividendes definitifs, avec repli provisoires) : meme
-            # logique que le journal valuebet, pour que CHAQUE cheval de ce
-            # journal (pas seulement ceux marques valuebet) ait son resultat
-            # Gagnant/Place final.
-            rapports = None
-            rapports_type = None
-            try:
-                rapports = fetch_rapports_definitifs(date_str, reunion, course)
-                if rapports:
-                    rapports_type = "definitifs"
-            except Exception as e:
-                print(f"[ODDS-TS-LOG] {label} : echec recuperation rapports definitifs : {e!r}")
-            if rapports is None:
-                try:
-                    rapports = fetch_rapports_provisoires(date_str, reunion, course)
-                    if rapports:
-                        rapports_type = "provisoires"
-                except Exception as e:
-                    print(f"[ODDS-TS-LOG] {label} : echec recuperation rapports provisoires : {e!r}")
-
-            # Rang de cote dans le peloton complet (1 = favori officiel de la
-            # course = cote finale la plus basse), fusionne ici depuis
-            # l'ancien journal race_snapshot : calcule a partir de la
-            # derniere cote live connue de chaque cheval (dernier sample).
-            cote_finale_par_num = {num: samples[-1]["coteLive"] for num, samples in timeseries_buffer.items() if samples}
-            ranked = sorted(cote_finale_par_num.items(), key=lambda kv: kv[1])
-            rang_par_num = {num: i + 1 for i, (num, _) in enumerate(ranked)}
-
-            horses = []
-            for num, samples in timeseries_buffer.items():
-                cote_finale = cote_finale_par_num.get(num)
-                cote_t0 = samples[0]["coteT0"] if samples else None
-                horses.append({
-                    "num": num,
-                    "nom": horse_names.get(num, f"#{num}"),
-                    "coteT0": cote_t0,
-                    "coteFinale": cote_finale,
-                    "rangCoteFinale": rang_par_num.get(num),  # 1 = favori officiel de la course
-                    "classementFinal": extract_classement(participants_data, num),
-                    "dividendeGagnant": extract_dividende(rapports, num, "GAGNANT"),
-                    "dividendePlace": extract_dividende(rapports, num, "PLACE"),
-                    "samples": samples,  # [{"t":..., "coteT0":..., "coteLive":..., "pctChute":...}, ...]
-                })
-
-            entry = {
-                "loggedAt": time.time(),
-                "date": date_str,
-                "reunion": reunion,
-                "course": course,
-                "label": label,
-                "hippodrome": hippodrome,
-                "paysCode": pays_code,
-                "paysLabel": pays_label,
-                "etrangere": etrangere,
-                "discipline": discipline,
-                "nbPartants": nb_partants,
-                "heureDepart": heure_depart,
-                "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
-                "sampleIntervalS": ODDS_TIMESERIES_SAMPLE_INTERVAL_S,
-                "windowBeforeS": ODDS_TIMESERIES_WINDOW_BEFORE_S,
-                "windowAfterS": ODDS_TIMESERIES_WINDOW_AFTER_S,
-                "horses": horses,
-            }
-            try:
-                with ODDS_TIMESERIES_LOG_LOCK:
-                    with open(ODDS_TIMESERIES_LOG_FILE, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                print(f"[ODDS-TS-LOG] {label} : {len(horses)} cheval(aux), "
-                      f"{sum(len(h['samples']) for h in horses)} points au total")
-            except Exception as e:
-                print(f"[ODDS-TS-LOG] echec ecriture journal : {e}")
-
-        threading.Thread(target=worker, daemon=True).start()
 
     def select_next_course(self):
         now_ms = time.time() * 1000
@@ -957,7 +1106,7 @@ class Tracker:
             # race_snapshot) et sert donc aussi de groupe de controle.
             prev_timeseries = dict(self.odds_timeseries_buffer)
             prev_horse_names = dict(self.horse_names)
-            self.log_odds_timeseries_async(
+            log_odds_timeseries_async(
                 prev_date, self.selected_reunion, self.selected_course, prev_label,
                 prev_timeseries, prev_horse_names, prev_course_info,
             )
@@ -1537,6 +1686,14 @@ if __name__ == "__main__":
 
     tracker = Tracker()
     threading.Thread(target=tracker.run_forever, daemon=True).start()
+
+    # Mecanisme independant, en parallele du Tracker principal, uniquement
+    # pour capturer la portion "avant course" (T-5min) du journal
+    # odds_timeseries que le Tracker principal rate souvent en pratique.
+    # Ne touche a aucun etat/comportement du Tracker principal (cf.
+    # LookaheadOddsLogger, docstring).
+    lookahead = LookaheadOddsLogger(tracker)
+    threading.Thread(target=lookahead.run_forever, daemon=True).start()
 
     with ThreadingHTTPServer(("0.0.0.0", PORT), Handler) as httpd:
         print(f"Serveur lance sur le port {PORT} (suivi PMU actif en tache de fond)")
