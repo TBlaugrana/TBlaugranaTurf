@@ -569,22 +569,32 @@ def log_odds_timeseries_async(date_str, reunion, course, label,
         # Rapports (dividendes definitifs, avec repli provisoires) : meme
         # logique que le journal valuebet, pour que CHAQUE cheval de ce
         # journal (pas seulement ceux marques valuebet) ait son resultat
-        # Gagnant/Place final.
+        # Gagnant/Place final. BUG CORRIGE : il manquait la boucle de
+        # reessai (une seule tentative ratait quasi toujours, les rapports
+        # definitifs n'etant presque jamais prets instantanement).
         rapports = None
         rapports_type = None
-        try:
-            rapports = fetch_rapports_definitifs(date_str, reunion, course)
-            if rapports:
-                rapports_type = "definitifs"
-        except Exception as e:
-            print(f"[ODDS-TS-LOG] {label} : echec recuperation rapports definitifs : {e!r}")
+        last_rapports_err = None
+        for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
+            try:
+                rapports = fetch_rapports_definitifs(date_str, reunion, course)
+                if rapports:
+                    rapports_type = "definitifs"
+                    break
+            except Exception as e:
+                last_rapports_err = e
+            time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
         if rapports is None:
             try:
                 rapports = fetch_rapports_provisoires(date_str, reunion, course)
                 if rapports:
                     rapports_type = "provisoires"
             except Exception as e:
-                print(f"[ODDS-TS-LOG] {label} : echec recuperation rapports provisoires : {e!r}")
+                last_rapports_err = e
+        if rapports is None:
+            print(f"[ODDS-TS-LOG] {label} : rapports indisponibles apres "
+                  f"{RAPPORTS_FETCH_ATTEMPTS} tentatives (+ repli provisoires echoue). "
+                  f"Derniere erreur : {last_rapports_err!r}")
 
         # Rang de cote dans le peloton complet (1 = favori officiel de la
         # course = cote finale la plus basse), fusionne ici depuis
@@ -637,6 +647,8 @@ def log_odds_timeseries_async(date_str, reunion, course, label,
                   f"{sum(len(h['samples']) for h in horses)} points au total")
         except Exception as e:
             print(f"[ODDS-TS-LOG] echec ecriture journal : {e}")
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
