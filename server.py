@@ -30,6 +30,7 @@ import os
 import threading
 import time
 import urllib.parse
+from collections import defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -146,6 +147,38 @@ VALUEBET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "va
 VALUEBET_LOG_LOCK = threading.Lock()
 RAPPORTS_FETCH_ATTEMPTS = 20      # nombre de tentatives pour recuperer les rapports definitifs
 RAPPORTS_FETCH_RETRY_DELAY_S = 60  # delai entre deux tentatives (~20 min de fenetre au total : les rapports definitifs peuvent mettre du temps, surtout en cas d'enquete des commissaires)
+
+# ---------------------------------------------------------------------------
+# Journal des series temporelles de cotes (photo periodique de tous les
+# chevaux en chute, autour du depart programme). Fichier SEPARE du journal
+# valuebet (odds_timeseries.jsonl) : n'affecte ni l'interface, ni le
+# fonctionnement du suivi, ni le journal valuebet existant.
+# ---------------------------------------------------------------------------
+ODDS_TIMESERIES_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "odds_timeseries.jsonl")
+ODDS_TIMESERIES_LOG_LOCK = threading.Lock()
+ODDS_TIMESERIES_SAMPLE_INTERVAL_S = 15   # un point toutes les 15s
+ODDS_TIMESERIES_WINDOW_BEFORE_S = 5 * 60  # a partir de T-5min (T = heure de depart PROGRAMMEE, cf. self.depart_ts)
+ODDS_TIMESERIES_WINDOW_AFTER_S = 5 * 60   # jusqu'a T+5min
+ODDS_TIMESERIES_CHUTE_MIN_PCT = 0.0    # on ne garde que les chevaux dont la cote a chute d'au moins ce %...
+ODDS_TIMESERIES_CHUTE_MAX_PCT = 200.0  # ...et au plus ce % (filtre large, demande explicite : 0 a 200%)
+
+# ---------------------------------------------------------------------------
+# Journal "peloton complet" (fichier SEPARE, RACE_SNAPSHOT_LOG_FILE) : pour
+# CHAQUE course suivie (pas seulement celles avec un signal valuebet ou une
+# chute), on enregistre TOUS les chevaux suivis avec leur cote finale, leur
+# rang de cote dans le peloton (1 = favori officiel de la course), leur
+# classement final et leurs rapports. Sert de groupe de controle (que
+# rapporterait un pari sur le favori officiel, independamment de tout signal
+# de chute ?) et permet d'analyser l'effet du rang de cote plutot que de la
+# seule valeur brute. Ajoute a la demande de l'utilisateur : "plus j'ai
+# d'info mieux c'est" -> ici, contrairement a un decoupage supplementaire
+# des memes donnees, c'est un type d'information nouveau (les chevaux SANS
+# signal), donc ca ne souffre pas du meme risque de sur-interpretation
+# statistique que multiplier les seuils/tranches sur le meme petit jeu de
+# donnees.
+# ---------------------------------------------------------------------------
+RACE_SNAPSHOT_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "race_snapshot.jsonl")
+RACE_SNAPSHOT_LOG_LOCK = threading.Lock()
 
 
 def _iter_dicts_with_typepari(obj, current_typepari=None):
@@ -274,6 +307,120 @@ def build_valuebet_csv():
                     ])
     except FileNotFoundError:
         pass  # aucun signal valuebet enregistre pour l'instant -> CSV avec juste l'entete
+    return buf.getvalue()
+
+
+def build_odds_timeseries_csv():
+    """Lit le journal odds_timeseries.jsonl (une ligne JSON par course,
+    contenant tous les chevaux en chute avec leur serie de points toutes
+    les 15s) et le met a plat en CSV, une ligne par (cheval, instant)."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "date", "reunion", "course", "label", "hippodrome", "paysCode", "etrangere",
+        "discipline", "nbPartants", "heureDepart", "rapportsType",
+        "num", "nom", "classementFinal", "dividendeGagnant", "dividendePlace",
+        "t", "secondesDepuisDepart", "coteT0", "coteLive", "pctChute",
+    ])
+    try:
+        with open(ODDS_TIMESERIES_LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                depart_iso = entry.get("heureDepart")
+                depart_ts = None
+                if depart_iso:
+                    try:
+                        depart_ts = datetime.fromisoformat(depart_iso).timestamp()
+                    except Exception:
+                        depart_ts = None
+                for h in (entry.get("horses") or []):
+                    for s in (h.get("samples") or []):
+                        t = s.get("t")
+                        t_str = datetime.fromtimestamp(t, tz=PARIS_TZ).isoformat() if t else ""
+                        secs_from_depart = (t - depart_ts) if (t is not None and depart_ts is not None) else ""
+                        writer.writerow([
+                            entry.get("date", ""),
+                            entry.get("reunion", ""),
+                            entry.get("course", ""),
+                            entry.get("label", ""),
+                            entry.get("hippodrome", ""),
+                            entry.get("paysCode", ""),
+                            entry.get("etrangere", ""),
+                            entry.get("discipline", ""),
+                            entry.get("nbPartants", ""),
+                            depart_iso or "",
+                            entry.get("rapportsType", ""),
+                            h.get("num", ""),
+                            h.get("nom", ""),
+                            h.get("classementFinal", ""),
+                            h.get("dividendeGagnant", ""),
+                            h.get("dividendePlace", ""),
+                            t_str,
+                            secs_from_depart,
+                            s.get("coteT0", ""),
+                            s.get("coteLive", ""),
+                            s.get("pctChute", ""),
+                        ])
+    except FileNotFoundError:
+        pass  # aucune donnee enregistree pour l'instant -> CSV avec juste l'entete
+    return buf.getvalue()
+
+
+def build_race_snapshot_csv():
+    """Lit le journal race_snapshot.jsonl (une ligne JSON par course,
+    contenant TOUT le peloton suivi) et le met a plat en CSV, une ligne
+    par (course, cheval). Contrairement au journal valuebet, inclut aussi
+    les chevaux sans aucun signal -> sert de groupe de controle et permet
+    d'analyser l'effet du rang de cote dans le peloton."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "date", "reunion", "course", "label", "hippodrome", "paysCode", "paysLabel", "etrangere",
+        "discipline", "nbPartants", "heureDepart", "rapportsType",
+        "num", "nom", "coteT0", "coteFinale", "rangCoteFinale", "classementFinal",
+        "dividendeGagnant", "dividendePlace",
+    ])
+    try:
+        with open(RACE_SNAPSHOT_LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                for h in (entry.get("horses") or []):
+                    writer.writerow([
+                        entry.get("date", ""),
+                        entry.get("reunion", ""),
+                        entry.get("course", ""),
+                        entry.get("label", ""),
+                        entry.get("hippodrome", ""),
+                        entry.get("paysCode", ""),
+                        entry.get("paysLabel", ""),
+                        entry.get("etrangere", ""),
+                        entry.get("discipline", ""),
+                        entry.get("nbPartants", ""),
+                        entry.get("heureDepart", ""),
+                        entry.get("rapportsType", ""),
+                        h.get("num", ""),
+                        h.get("nom", ""),
+                        h.get("coteT0", ""),
+                        h.get("coteFinale", ""),
+                        h.get("rangCoteFinale", ""),
+                        h.get("classementFinal", ""),
+                        h.get("dividendeGagnant", ""),
+                        h.get("dividendePlace", ""),
+                    ])
+    except FileNotFoundError:
+        pass  # aucune donnee enregistree pour l'instant -> CSV avec juste l'entete
     return buf.getvalue()
 
 # ---------------------------------------------------------------------------
@@ -427,6 +574,8 @@ class Tracker:
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
         self.valuebet_seen = {}   # num -> {"pctChute": ..., "at": ...} une fois le seuil de chute franchi ; retire si la cote remonte ensuite (voir handle_odds)
+        self.odds_timeseries_buffer = defaultdict(list)  # num -> [{"t":..., "coteLive":..., "pctChute":...}, ...] echantillonne toutes les 15s pres du depart (journal separe, cf. ODDS_TIMESERIES_*)
+        self.last_timeseries_sample_ts = 0.0
         self.tracking_started_at = None  # timestamp du debut du suivi de la course en cours (informatif)
         self.snapshot_taken = False      # True des que le snapshot T0 a ete capture (bascule mode warm-up -> mode normal)
         self.last_reprog = 0.0
@@ -685,6 +834,191 @@ class Tracker:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def log_odds_timeseries_async(self, date_str, reunion, course, label,
+                                   timeseries_buffer, horse_names, course_info=None):
+        """Ecrit en tache de fond le journal des series temporelles de
+        cotes (fichier SEPARE, ODDS_TIMESERIES_LOG_FILE) : un point toutes
+        les 15s pour chaque cheval en chute (0 a 200%) entre T-5min et
+        T+5min (T = heure de depart PROGRAMMEE). Attend aussi le classement
+        final (best-effort, cf. extract_classement) avant d'ecrire, comme
+        pour le journal valuebet — mais dans un thread separe, pour ne pas
+        dependre l'un de l'autre ni bloquer le suivi en direct."""
+        if not timeseries_buffer:
+            return
+        hippodrome = (course_info or {}).get("hip")
+        discipline = (course_info or {}).get("discipline")
+        nb_partants = (course_info or {}).get("nbPartants")
+        pays_code = (course_info or {}).get("paysCode")
+        pays_label = (course_info or {}).get("paysLabel")
+        etrangere = (course_info or {}).get("etrangere")
+        depart_ms = (course_info or {}).get("depart")
+        heure_depart = (datetime.fromtimestamp(depart_ms / 1000.0, tz=PARIS_TZ).isoformat()
+                         if depart_ms else None)
+
+        def worker():
+            participants_data = None
+            try:
+                for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
+                    participants_data = fetch_participants_arrivee(date_str, reunion, course)
+                    if participants_data and extract_classement(participants_data, next(iter(timeseries_buffer))):
+                        break
+                    time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
+            except Exception as e:
+                print(f"[ODDS-TS-LOG] {label} : echec recuperation classement : {e!r}")
+
+            # Rapports (dividendes definitifs, avec repli provisoires) : meme
+            # logique que le journal valuebet, pour que CHAQUE cheval de ce
+            # journal (pas seulement ceux marques valuebet) ait son resultat
+            # Gagnant/Place final.
+            rapports = None
+            rapports_type = None
+            try:
+                rapports = fetch_rapports_definitifs(date_str, reunion, course)
+                if rapports:
+                    rapports_type = "definitifs"
+            except Exception as e:
+                print(f"[ODDS-TS-LOG] {label} : echec recuperation rapports definitifs : {e!r}")
+            if rapports is None:
+                try:
+                    rapports = fetch_rapports_provisoires(date_str, reunion, course)
+                    if rapports:
+                        rapports_type = "provisoires"
+                except Exception as e:
+                    print(f"[ODDS-TS-LOG] {label} : echec recuperation rapports provisoires : {e!r}")
+
+            horses = []
+            for num, samples in timeseries_buffer.items():
+                horses.append({
+                    "num": num,
+                    "nom": horse_names.get(num, f"#{num}"),
+                    "classementFinal": extract_classement(participants_data, num),
+                    "dividendeGagnant": extract_dividende(rapports, num, "GAGNANT"),
+                    "dividendePlace": extract_dividende(rapports, num, "PLACE"),
+                    "samples": samples,  # [{"t":..., "coteT0":..., "coteLive":..., "pctChute":...}, ...]
+                })
+
+            entry = {
+                "loggedAt": time.time(),
+                "date": date_str,
+                "reunion": reunion,
+                "course": course,
+                "label": label,
+                "hippodrome": hippodrome,
+                "paysCode": pays_code,
+                "paysLabel": pays_label,
+                "etrangere": etrangere,
+                "discipline": discipline,
+                "nbPartants": nb_partants,
+                "heureDepart": heure_depart,
+                "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
+                "sampleIntervalS": ODDS_TIMESERIES_SAMPLE_INTERVAL_S,
+                "windowBeforeS": ODDS_TIMESERIES_WINDOW_BEFORE_S,
+                "windowAfterS": ODDS_TIMESERIES_WINDOW_AFTER_S,
+                "horses": horses,
+            }
+            try:
+                with ODDS_TIMESERIES_LOG_LOCK:
+                    with open(ODDS_TIMESERIES_LOG_FILE, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                print(f"[ODDS-TS-LOG] {label} : {len(horses)} cheval(aux), "
+                      f"{sum(len(h['samples']) for h in horses)} points au total")
+            except Exception as e:
+                print(f"[ODDS-TS-LOG] echec ecriture journal : {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def log_race_snapshot_async(self, date_str, reunion, course, label,
+                                 all_cotes_t0, all_cotes_finale, horse_names, course_info=None):
+        """Ecrit en tache de fond le journal 'peloton complet' (fichier
+        SEPARE, RACE_SNAPSHOT_LOG_FILE) : TOUS les chevaux suivis sur cette
+        course (pas seulement ceux en chute ou marques valuebet), avec leur
+        cote finale, leur rang dans le peloton (1 = favori officiel) et,
+        une fois disponibles, leur classement et leurs rapports. Sert de
+        groupe de controle et permet d'etudier l'effet du rang de cote."""
+        if not all_cotes_finale:
+            return
+        hippodrome = (course_info or {}).get("hip")
+        discipline = (course_info or {}).get("discipline")
+        nb_partants = (course_info or {}).get("nbPartants")
+        pays_code = (course_info or {}).get("paysCode")
+        pays_label = (course_info or {}).get("paysLabel")
+        etrangere = (course_info or {}).get("etrangere")
+        depart_ms = (course_info or {}).get("depart")
+        heure_depart = (datetime.fromtimestamp(depart_ms / 1000.0, tz=PARIS_TZ).isoformat()
+                         if depart_ms else None)
+
+        # Rang de cote dans le peloton complet (1 = favori officiel = cote
+        # finale la plus basse), calcule une seule fois ici (pas besoin
+        # d'attendre le classement/rapports pour ca).
+        ranked = sorted(all_cotes_finale.items(), key=lambda kv: kv[1])
+        rang_par_num = {num: i + 1 for i, (num, _) in enumerate(ranked)}
+
+        def worker():
+            participants_data = None
+            try:
+                for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
+                    participants_data = fetch_participants_arrivee(date_str, reunion, course)
+                    if participants_data and extract_classement(participants_data, next(iter(all_cotes_finale))):
+                        break
+                    time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
+            except Exception as e:
+                print(f"[RACE-SNAPSHOT-LOG] {label} : echec recuperation classement : {e!r}")
+
+            rapports = None
+            rapports_type = None
+            try:
+                rapports = fetch_rapports_definitifs(date_str, reunion, course)
+                if rapports:
+                    rapports_type = "definitifs"
+            except Exception as e:
+                print(f"[RACE-SNAPSHOT-LOG] {label} : echec recuperation rapports definitifs : {e!r}")
+            if rapports is None:
+                try:
+                    rapports = fetch_rapports_provisoires(date_str, reunion, course)
+                    if rapports:
+                        rapports_type = "provisoires"
+                except Exception as e:
+                    print(f"[RACE-SNAPSHOT-LOG] {label} : echec recuperation rapports provisoires : {e!r}")
+
+            horses = []
+            for num, cote_finale in all_cotes_finale.items():
+                horses.append({
+                    "num": num,
+                    "nom": horse_names.get(num, f"#{num}"),
+                    "coteT0": all_cotes_t0.get(num),
+                    "coteFinale": cote_finale,
+                    "rangCoteFinale": rang_par_num.get(num),  # 1 = favori officiel de la course
+                    "classementFinal": extract_classement(participants_data, num),
+                    "dividendeGagnant": extract_dividende(rapports, num, "GAGNANT"),
+                    "dividendePlace": extract_dividende(rapports, num, "PLACE"),
+                })
+
+            entry = {
+                "loggedAt": time.time(),
+                "date": date_str,
+                "reunion": reunion,
+                "course": course,
+                "label": label,
+                "hippodrome": hippodrome,
+                "paysCode": pays_code,
+                "paysLabel": pays_label,
+                "etrangere": etrangere,
+                "discipline": discipline,
+                "nbPartants": nb_partants,
+                "heureDepart": heure_depart,
+                "rapportsType": rapports_type,
+                "horses": horses,  # TOUT le peloton suivi, pas seulement les signaux
+            }
+            try:
+                with RACE_SNAPSHOT_LOG_LOCK:
+                    with open(RACE_SNAPSHOT_LOG_FILE, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                print(f"[RACE-SNAPSHOT-LOG] {label} : {len(horses)} cheval(aux) enregistres (peloton complet)")
+            except Exception as e:
+                print(f"[RACE-SNAPSHOT-LOG] echec ecriture journal : {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def select_next_course(self):
         now_ms = time.time() * 1000
         upcoming = [c for c in self.all_courses if c["depart"] and c["depart"] >= now_ms]
@@ -711,6 +1045,28 @@ class Tracker:
                 prev_course_info,
             )
 
+            # Meme principe pour le journal des series temporelles de cotes
+            # (fichier separe, cf. ODDS_TIMESERIES_*) : on fige le buffer
+            # accumule pendant la course qu'on quitte avant qu'il ne soit
+            # reinitialise par start_tracking() juste apres.
+            prev_timeseries = dict(self.odds_timeseries_buffer)
+            prev_horse_names = dict(self.horse_names)
+            self.log_odds_timeseries_async(
+                prev_date, self.selected_reunion, self.selected_course, prev_label,
+                prev_timeseries, prev_horse_names, prev_course_info,
+            )
+
+            # Journal "peloton complet" : TOUS les chevaux suivis (via
+            # cote_live_last, qui contient un point par cheval vu au moins
+            # une fois), pas seulement ceux en chute -> groupe de controle +
+            # rang de cote.
+            prev_all_cotes_t0 = dict(self.cote_t0)
+            prev_all_cotes_finale = dict(self.cote_live_last)
+            self.log_race_snapshot_async(
+                prev_date, self.selected_reunion, self.selected_course, prev_label,
+                prev_all_cotes_t0, prev_all_cotes_finale, prev_horse_names, prev_course_info,
+            )
+
         self.selected_reunion = chosen["numReunion"]
         self.selected_course = chosen["course"]
         self.depart_ts = chosen["depart"] / 1000.0
@@ -729,6 +1085,8 @@ class Tracker:
         self.ema_last_t = {}
         self.bigmove_seen = {}
         self.valuebet_seen = {}
+        self.odds_timeseries_buffer = defaultdict(list)
+        self.last_timeseries_sample_ts = 0.0
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
         set_state(rows=[], snapLine="📸 Snapshot T0 au depart de la course — en attente…")
@@ -994,6 +1352,27 @@ class Tracker:
                 pct_chute = (cote_t0 - cote_live) / cote_t0 * 100
             ecarts[num] = (cote_t0, cote_live, pct_chute)
 
+        # --- echantillonnage des series temporelles (journal separe) -------
+        # Un point toutes les 15s, uniquement dans la fenetre [depart-5min,
+        # depart+5min] (depart = heure PROGRAMMEE, pas reelle, cf. discussion
+        # avec l'utilisateur : les courses partent souvent en retard, d'ou la
+        # marge de 5min de chaque cote). Pour chaque cheval dont la cote a
+        # chute entre ODDS_TIMESERIES_CHUTE_MIN_PCT et _MAX_PCT (pas
+        # seulement ceux marques valuebet).
+        if self.depart_ts is not None:
+            in_window = (self.depart_ts - ODDS_TIMESERIES_WINDOW_BEFORE_S) <= now <= (self.depart_ts + ODDS_TIMESERIES_WINDOW_AFTER_S)
+            due = (now - self.last_timeseries_sample_ts) >= ODDS_TIMESERIES_SAMPLE_INTERVAL_S
+            if in_window and due:
+                self.last_timeseries_sample_ts = now
+                for num, (ct0, clive, pc) in ecarts.items():
+                    if pc is not None and ODDS_TIMESERIES_CHUTE_MIN_PCT <= pc <= ODDS_TIMESERIES_CHUTE_MAX_PCT:
+                        self.odds_timeseries_buffer[num].append({
+                            "t": now,
+                            "coteT0": ct0,
+                            "coteLive": clive,
+                            "pctChute": pc,
+                        })
+
         def sort_key(n):
             pc = ecarts[n][2]
             return (pc is None, -(pc if pc is not None else 0))
@@ -1153,6 +1532,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_valuebet_csv()
         elif self.path.startswith("/api/valuebet-log/reset"):
             self.handle_valuebet_reset()
+        elif self.path.startswith("/api/odds-timeseries.csv"):
+            self.handle_odds_timeseries_csv()
+        elif self.path.startswith("/api/odds-timeseries/reset"):
+            self.handle_odds_timeseries_reset()
+        elif self.path.startswith("/api/race-snapshot.csv"):
+            self.handle_race_snapshot_csv()
+        elif self.path.startswith("/api/race-snapshot/reset"):
+            self.handle_race_snapshot_reset()
         elif self.path == "/":
             self.path = "/pmu_bot.html"
             super().do_GET()
@@ -1166,6 +1553,76 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Content-Disposition", 'attachment; filename="valuebet_log.csv"')
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_odds_timeseries_csv(self):
+        body = build_odds_timeseries_csv().encode("utf-8-sig")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", 'attachment; filename="odds_timeseries.csv"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_odds_timeseries_reset(self):
+        query = urllib.parse.urlsplit(self.path).query
+        params = urllib.parse.parse_qs(query)
+        confirmed = params.get("confirm", [""])[0].lower() in ("oui", "yes", "1", "true")
+        if not confirmed:
+            body = ("Rien supprime. Ajoute ?confirm=oui a l'URL pour "
+                    "confirmer la remise a zero du journal des series temporelles.").encode("utf-8")
+            self.send_response(200)
+        else:
+            try:
+                with ODDS_TIMESERIES_LOG_LOCK:
+                    open(ODDS_TIMESERIES_LOG_FILE, "w", encoding="utf-8").close()
+                body = "Journal des series temporelles remis a zero.".encode("utf-8")
+                self.send_response(200)
+                print("[ODDS-TS-LOG] journal remis a zero via /api/odds-timeseries/reset")
+            except Exception as e:
+                body = f"Echec de la remise a zero : {e}".encode("utf-8")
+                self.send_response(500)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_race_snapshot_csv(self):
+        body = build_race_snapshot_csv().encode("utf-8-sig")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", 'attachment; filename="race_snapshot.csv"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_race_snapshot_reset(self):
+        query = urllib.parse.urlsplit(self.path).query
+        params = urllib.parse.parse_qs(query)
+        confirmed = params.get("confirm", [""])[0].lower() in ("oui", "yes", "1", "true")
+        if not confirmed:
+            body = ("Rien supprime. Ajoute ?confirm=oui a l'URL pour "
+                    "confirmer la remise a zero du journal peloton complet.").encode("utf-8")
+            self.send_response(200)
+        else:
+            try:
+                with RACE_SNAPSHOT_LOG_LOCK:
+                    open(RACE_SNAPSHOT_LOG_FILE, "w", encoding="utf-8").close()
+                body = "Journal peloton complet remis a zero.".encode("utf-8")
+                self.send_response(200)
+                print("[RACE-SNAPSHOT-LOG] journal remis a zero via /api/race-snapshot/reset")
+            except Exception as e:
+                body = f"Echec de la remise a zero : {e}".encode("utf-8")
+                self.send_response(500)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
