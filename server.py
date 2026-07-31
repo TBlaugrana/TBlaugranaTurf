@@ -107,7 +107,8 @@ BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la der
 # est marque valuebet. Ce marquage est RETIRE des que pctChute repasse sous
 # ce seuil (contrairement a bigmove qui reste definitif), independamment de
 # la vitesse de variation ou d'une fenetre de temps avant le depart.
-VALUEBET_CHUTE_THRESHOLD_PCT = 10.0
+VALUEBET_CHUTE_THRESHOLD_PCT = 15.0
+SNAPSHOT_BEFORE_DEPART_S = 60  # le snapshot T1 (reference pour le % de chute) est capture 1min AVANT le depart programme, plus la course avance officiellement pas au depart lui-meme
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
@@ -156,11 +157,10 @@ RAPPORTS_FETCH_RETRY_DELAY_S = 60  # delai entre deux tentatives (~20 min de fen
 # ---------------------------------------------------------------------------
 ODDS_TIMESERIES_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "odds_timeseries.jsonl")
 ODDS_TIMESERIES_LOG_LOCK = threading.Lock()
-ODDS_TIMESERIES_SAMPLE_INTERVAL_S = 15   # un point toutes les 15s
+ODDS_TIMESERIES_SAMPLE_INTERVAL_S = 60   # un point toutes les 60s (1min)
 ODDS_TIMESERIES_WINDOW_BEFORE_S = 5 * 60  # a partir de T-5min (T = heure de depart PROGRAMMEE, cf. self.depart_ts)
 ODDS_TIMESERIES_WINDOW_AFTER_S = 5 * 60   # jusqu'a T+5min
-ODDS_TIMESERIES_CHUTE_MIN_PCT = 0.0    # on ne garde que les chevaux dont la cote a chute d'au moins ce %...
-ODDS_TIMESERIES_CHUTE_MAX_PCT = 200.0  # ...et au plus ce % (filtre large, demande explicite : 0 a 200%) -- NOTE: filtre desactive depuis la fusion avec l'ancien race_snapshot, tout le peloton est echantillonne
+
 
 
 def _iter_dicts_with_typepari(obj, current_typepari=None):
@@ -260,7 +260,7 @@ def build_valuebet_csv():
     writer.writerow([
         "date", "reunion", "course", "label", "hippodrome", "paysCode", "paysLabel", "etrangere", "discipline",
         "nbPartants", "heureDepart", "nbValuebetsSimultanes",
-        "loggedAt", "num", "nom", "coteT0", "probaImpliciteT0", "pctChuteAuMarquage", "marqueAt",
+        "loggedAt", "num", "nom", "coteT1", "probaImpliciteT1", "pctChuteAuMarquage", "marqueAt",
         "coteAuMarquage", "probaImpliciteAuMarquage",
         "coteLiveFinale", "probaImpliciteFinale", "pctChuteFinale", "deltaProbaAuMarquage", "deltaProbaFinale",
         "delaiSignalDepartMin", "classementFinal",
@@ -286,13 +286,13 @@ def build_valuebet_csv():
                     marque_at = h.get("marqueAt")
                     marque_at_str = (datetime.fromtimestamp(marque_at, tz=PARIS_TZ).isoformat()
                                       if marque_at else "")
-                    cote_t0 = h.get("coteT0")
+                    cote_t1 = h.get("coteT1")
                     pct_marquage = h.get("pctChuteAuMarquage")
                     cote_finale = h.get("coteLiveFinale")
-                    cote_au_marquage = (cote_t0 * (1 - pct_marquage / 100.0)
-                                         if cote_t0 is not None and pct_marquage is not None else None)
-                    delta_proba_marquage = delta_proba(cote_t0, cote_au_marquage)
-                    delta_proba_finale = delta_proba(cote_t0, cote_finale)
+                    cote_au_marquage = (cote_t1 * (1 - pct_marquage / 100.0)
+                                         if cote_t1 is not None and pct_marquage is not None else None)
+                    delta_proba_marquage = delta_proba(cote_t1, cote_au_marquage)
+                    delta_proba_finale = delta_proba(cote_t1, cote_finale)
                     writer.writerow([
                         entry.get("date", ""),
                         entry.get("reunion", ""),
@@ -309,8 +309,8 @@ def build_valuebet_csv():
                         logged_at_str,
                         num,
                         h.get("nom", ""),
-                        cote_t0,
-                        proba_implicite(cote_t0),
+                        cote_t1,
+                        proba_implicite(cote_t1),
                         pct_marquage,
                         marque_at_str,
                         cote_au_marquage,
@@ -333,22 +333,31 @@ def build_valuebet_csv():
 
 
 def build_odds_timeseries_csv():
-    """Lit le journal odds_timeseries.jsonl (une ligne JSON par course,
-    contenant TOUT le peloton suivi avec sa serie de points toutes les
-    15s) et le met a plat en CSV, une ligne par (cheval, instant). Fusionne
-    l'ancien journal race_snapshot : coteFinale/rangCoteFinale/deltaProba
-    sont repetes sur chaque ligne d'un meme cheval pour rester facilement
-    filtrables sans avoir a re-agreger la serie temporelle."""
+    """Lit le journal odds_timeseries.jsonl (une ligne JSON par course
+    francaise suivie, contenant TOUT le peloton avec un point toutes les
+    ODDS_TIMESERIES_SAMPLE_INTERVAL_S secondes de T-5min a T+5min autour du
+    depart PROGRAMME) et le met en forme "large" : UNE LIGNE PAR CHEVAL,
+    avec une colonne de cote par minute (coteM5 .. coteDepart .. coteP5),
+    plutot qu'une ligne par (cheval, instant). Chaque colonne prend
+    l'echantillon le plus proche de la minute visee (tolerance 30s ;
+    au-dela, vide). Format volontairement simple : date et label (ex.
+    R1C1) bien separes, discipline explicite, et seulement les rapports
+    Simple Gagnant / Simple Place (pas de classement d'arrivee)."""
+    # Minutes ciblees, de T-5min a T+5min (T = depart programme)
+    minute_offsets = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
+    col_names = {
+        -5: "coteM5", -4: "coteM4", -3: "coteM3", -2: "coteM2", -1: "coteM1",
+        0: "coteDepart",
+        1: "coteP1", 2: "coteP2", 3: "coteP3", 4: "coteP4", 5: "coteP5",
+    }
+
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([
-        "date", "reunion", "course", "label", "hippodrome", "paysCode", "etrangere",
-        "discipline", "nbPartants", "heureDepart", "rapportsType",
-        "num", "nom", "coteT0", "probaImpliciteT0", "coteFinale", "probaImpliciteFinale",
-        "rangCoteFinale", "deltaProbaFinale",
-        "classementFinal", "dividendeGagnant", "dividendePlace",
-        "t", "secondesDepuisDepart", "coteLiveInstant", "probaImpliciteInstant", "pctChuteInstant", "deltaProbaInstant",
-    ])
+    writer.writerow(
+        ["date", "label", "discipline", "heureDepart", "num", "nom"]
+        + [col_names[m] for m in minute_offsets]
+        + ["rapportSimpleGagnant", "rapportSimplePlace"]
+    )
     try:
         with open(ODDS_TIMESERIES_LOG_FILE, "r", encoding="utf-8") as f:
             for line in f:
@@ -367,40 +376,40 @@ def build_odds_timeseries_csv():
                     except Exception:
                         depart_ts = None
                 for h in (entry.get("horses") or []):
-                    for s in (h.get("samples") or []):
-                        t = s.get("t")
-                        t_str = datetime.fromtimestamp(t, tz=PARIS_TZ).isoformat() if t else ""
-                        secs_from_depart = (t - depart_ts) if (t is not None and depart_ts is not None) else ""
-                        writer.writerow([
+                    samples = h.get("samples") or []
+                    # pour chaque minute ciblee, on prend l'echantillon le
+                    # plus proche (tolerance 30s = la moitie de l'intervalle
+                    # d'echantillonnage)
+                    cote_par_minute = {}
+                    if depart_ts is not None:
+                        for m in minute_offsets:
+                            target_s = depart_ts + m * 60
+                            best = None
+                            best_diff = None
+                            for s in samples:
+                                t = s.get("t")
+                                if t is None:
+                                    continue
+                                diff = abs(t - target_s)
+                                if diff <= 30 and (best_diff is None or diff < best_diff):
+                                    best = s.get("coteInstant")
+                                    best_diff = diff
+                            cote_par_minute[m] = best
+                    writer.writerow(
+                        [
                             entry.get("date", ""),
-                            entry.get("reunion", ""),
-                            entry.get("course", ""),
                             entry.get("label", ""),
-                            entry.get("hippodrome", ""),
-                            entry.get("paysCode", ""),
-                            entry.get("etrangere", ""),
                             entry.get("discipline", ""),
-                            entry.get("nbPartants", ""),
                             depart_iso or "",
-                            entry.get("rapportsType", ""),
                             h.get("num", ""),
                             h.get("nom", ""),
-                            h.get("coteT0", ""),
-                            proba_implicite(h.get("coteT0")),
-                            h.get("coteFinale", ""),
-                            proba_implicite(h.get("coteFinale")),
-                            h.get("rangCoteFinale", ""),
-                            delta_proba(h.get("coteT0"), h.get("coteFinale")),
-                            h.get("classementFinal", ""),
-                            h.get("dividendeGagnant", ""),
-                            h.get("dividendePlace", ""),
-                            t_str,
-                            secs_from_depart,
-                            s.get("coteLive", ""),
-                            proba_implicite(s.get("coteLive")),
-                            s.get("pctChute", ""),
-                            delta_proba(s.get("coteT0"), s.get("coteLive")),
-                        ])
+                        ]
+                        + [cote_par_minute.get(m, "") if cote_par_minute.get(m) is not None else "" for m in minute_offsets]
+                        + [
+                            h.get("rapportSimpleGagnant", ""),
+                            h.get("rapportSimplePlace", ""),
+                        ]
+                    )
     except FileNotFoundError:
         pass  # aucune donnee enregistree pour l'instant -> CSV avec juste l'entete
     return buf.getvalue()
@@ -536,50 +545,32 @@ def is_etrangere(reunion):
 
 def log_odds_timeseries_async(date_str, reunion, course, label,
                            timeseries_buffer, horse_names, course_info=None):
-    """Ecrit en tache de fond le journal des series temporelles de
-    cotes (fichier SEPARE, ODDS_TIMESERIES_LOG_FILE) : un point toutes
-    les 15s pour chaque cheval en chute (0 a 200%) entre T-5min et
-    T+5min (T = heure de depart PROGRAMMEE). Attend aussi le classement
-    final (best-effort, cf. extract_classement) avant d'ecrire, comme
-    pour le journal valuebet — mais dans un thread separe, pour ne pas
-    dependre l'un de l'autre ni bloquer le suivi en direct."""
+    """Ecrit en tache de fond le journal des series temporelles de cotes
+    (fichier SEPARE, ODDS_TIMESERIES_LOG_FILE) : un point toutes les
+    ODDS_TIMESERIES_SAMPLE_INTERVAL_S secondes pour TOUT le peloton, entre
+    T-5min et T+5min (T = heure de depart PROGRAMMEE). Version simplifiee
+    a la demande de l'utilisateur : plus de classement d'arrivee (best
+    effort, jamais fiable) -- seulement les rapports Simple Gagnant et
+    Simple Place, qui suffisent a savoir si un cheval a gagne/ete place."""
     if not timeseries_buffer:
         return
     hippodrome = (course_info or {}).get("hip")
     discipline = (course_info or {}).get("discipline")
     nb_partants = (course_info or {}).get("nbPartants")
-    pays_code = (course_info or {}).get("paysCode")
-    pays_label = (course_info or {}).get("paysLabel")
-    etrangere = (course_info or {}).get("etrangere")
     depart_ms = (course_info or {}).get("depart")
     heure_depart = (datetime.fromtimestamp(depart_ms / 1000.0, tz=PARIS_TZ).isoformat()
                      if depart_ms else None)
 
     def worker():
-        participants_data = None
-        try:
-            for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
-                participants_data = fetch_participants_arrivee(date_str, reunion, course)
-                if participants_data and extract_classement(participants_data, next(iter(timeseries_buffer))):
-                    break
-                time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
-        except Exception as e:
-            print(f"[ODDS-TS-LOG] {label} : echec recuperation classement : {e!r}")
-
-        # Rapports (dividendes definitifs, avec repli provisoires) : meme
-        # logique que le journal valuebet, pour que CHAQUE cheval de ce
-        # journal (pas seulement ceux marques valuebet) ait son resultat
-        # Gagnant/Place final. BUG CORRIGE : il manquait la boucle de
-        # reessai (une seule tentative ratait quasi toujours, les rapports
-        # definitifs n'etant presque jamais prets instantanement).
+        # Rapports (definitifs, avec repli provisoires + boucle de reessai
+        # -- les rapports definitifs ne sont presque jamais prets
+        # instantanement, il faut laisser du temps a PMU).
         rapports = None
-        rapports_type = None
         last_rapports_err = None
         for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
             try:
                 rapports = fetch_rapports_definitifs(date_str, reunion, course)
                 if rapports:
-                    rapports_type = "definitifs"
                     break
             except Exception as e:
                 last_rapports_err = e
@@ -587,8 +578,6 @@ def log_odds_timeseries_async(date_str, reunion, course, label,
         if rapports is None:
             try:
                 rapports = fetch_rapports_provisoires(date_str, reunion, course)
-                if rapports:
-                    rapports_type = "provisoires"
             except Exception as e:
                 last_rapports_err = e
         if rapports is None:
@@ -597,43 +586,34 @@ def log_odds_timeseries_async(date_str, reunion, course, label,
                   f"Derniere erreur : {last_rapports_err!r}")
 
         # Rang de cote dans le peloton complet (1 = favori officiel de la
-        # course = cote finale la plus basse), fusionne ici depuis
-        # l'ancien journal race_snapshot : calcule a partir de la
-        # derniere cote live connue de chaque cheval (dernier sample).
-        cote_finale_par_num = {num: samples[-1]["coteLive"] for num, samples in timeseries_buffer.items() if samples}
+        # course = cote finale la plus basse), calcule a partir de la
+        # derniere cote connue de chaque cheval (dernier sample).
+        cote_finale_par_num = {num: samples[-1]["coteInstant"] for num, samples in timeseries_buffer.items() if samples}
         ranked = sorted(cote_finale_par_num.items(), key=lambda kv: kv[1])
         rang_par_num = {num: i + 1 for i, (num, _) in enumerate(ranked)}
 
         horses = []
         for num, samples in timeseries_buffer.items():
-            cote_finale = cote_finale_par_num.get(num)
-            cote_t0 = samples[0]["coteT0"] if samples else None
+            if not samples:
+                continue
             horses.append({
                 "num": num,
                 "nom": horse_names.get(num, f"#{num}"),
-                "coteT0": cote_t0,
-                "coteFinale": cote_finale,
+                "coteFinale": cote_finale_par_num.get(num),
                 "rangCoteFinale": rang_par_num.get(num),  # 1 = favori officiel de la course
-                "classementFinal": extract_classement(participants_data, num),
-                "dividendeGagnant": extract_dividende(rapports, num, "GAGNANT"),
-                "dividendePlace": extract_dividende(rapports, num, "PLACE"),
-                "samples": samples,  # [{"t":..., "coteT0":..., "coteLive":..., "pctChute":...}, ...]
+                "rapportSimpleGagnant": extract_dividende(rapports, num, "GAGNANT"),
+                "rapportSimplePlace": extract_dividende(rapports, num, "PLACE"),
+                "samples": samples,  # [{"t":..., "coteInstant":...}, ...]
             })
 
         entry = {
             "loggedAt": time.time(),
             "date": date_str,
-            "reunion": reunion,
-            "course": course,
             "label": label,
             "hippodrome": hippodrome,
-            "paysCode": pays_code,
-            "paysLabel": pays_label,
-            "etrangere": etrangere,
             "discipline": discipline,
             "nbPartants": nb_partants,
             "heureDepart": heure_depart,
-            "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
             "sampleIntervalS": ODDS_TIMESERIES_SAMPLE_INTERVAL_S,
             "windowBeforeS": ODDS_TIMESERIES_WINDOW_BEFORE_S,
             "windowAfterS": ODDS_TIMESERIES_WINDOW_AFTER_S,
@@ -688,7 +668,7 @@ class LookaheadOddsLogger:
     depart officiel passe, ratant toute la fenetre "avant course".
 
     IMPORTANT : ce mecanisme ne touche a AUCUN etat du Tracker principal
-    (cote_t0, valuebet_seen, selected_reunion, l'affichage /api/state,
+    (cote_t1, valuebet_seen, selected_reunion, l'affichage /api/state,
     etc.). Il lit seulement tracker.all_courses en lecture seule (deja mis
     a jour par le Tracker principal) et fait ses propres requetes HTTP
     independantes, dans son propre thread. Zero impact sur le comportement
@@ -700,7 +680,7 @@ class LookaheadOddsLogger:
         self.tracker = tracker
         self.current_key = None          # (reunion, course) actuellement suivie en avance
         self.current_course_info = None
-        self.buffer = defaultdict(list)  # num -> [{"t":..., "coteT0":..., "coteLive":..., "pctChute":...}, ...]
+        self.buffer = defaultdict(list)  # num -> [{"t":..., "coteInstant":...}, ...] -- juste des prises de cote brutes, pas de "reference"
         self.horse_names = {}
         self.last_sample_ts = 0.0
         self.flushed_keys = set()        # eviter de logguer deux fois la meme course
@@ -776,20 +756,12 @@ class LookaheadOddsLogger:
         self.last_sample_ts = now
 
         for num, info in gagnant_map.items():
-            cote_live = info.get("ratio")
-            if cote_live is None:
+            cote_instant = info.get("ratio")
+            if cote_instant is None:
                 continue
-            existing = self.buffer.get(num)
-            # coteT0 "locale" a ce mini-suivi en avance : la 1ere cote vue
-            # pour ce cheval ICI (peut differer legerement du coteT0 du
-            # Tracker principal, qui demarre son propre suivi plus tard).
-            cote_t0 = existing[0]["coteT0"] if existing else cote_live
-            pct_chute = ((cote_t0 - cote_live) / cote_t0 * 100) if cote_t0 else None
             self.buffer[num].append({
                 "t": now,
-                "coteT0": cote_t0,
-                "coteLive": cote_live,
-                "pctChute": pct_chute,
+                "coteInstant": cote_instant,
             })
 
     def run_forever(self):
@@ -816,15 +788,13 @@ class Tracker:
 
         self.favoris_order = []   # ordre de suivi des chevaux (num en string)
         self.horse_names = {}
-        self.cote_t0 = {}         # num -> cote Gagnant (%) au moment du snapshot T0 (1ere cote vue pour ce cheval sur cette course)
+        self.cote_t1 = {}         # num -> cote Gagnant (%) au moment du snapshot T0 (1ere cote vue pour ce cheval sur cette course)
         self.cote_live_last = {}  # num -> derniere cote Gagnant live connue (mise a jour a chaque poll) ; sert a capturer la "cote finale" au moment de la bascule de course
         self.odds_history = {}    # num -> [(t, prob_lissee_ema), ...]
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
         self.valuebet_seen = {}   # num -> {"pctChute": ..., "at": ...} une fois le seuil de chute franchi ; retire si la cote remonte ensuite (voir handle_odds)
-        self.odds_timeseries_buffer = defaultdict(list)  # num -> [{"t":..., "coteLive":..., "pctChute":...}, ...] echantillonne toutes les 15s pres du depart (journal separe, cf. ODDS_TIMESERIES_*)
-        self.last_timeseries_sample_ts = 0.0
         self.tracking_started_at = None  # timestamp du debut du suivi de la course en cours (informatif)
         self.snapshot_taken = False      # True des que le snapshot T0 a ete capture (bascule mode warm-up -> mode normal)
         self.last_reprog = 0.0
@@ -844,7 +814,7 @@ class Tracker:
                 "selected_nb_partants": self.selected_nb_partants,
                 "favoris_order": self.favoris_order,
                 "horse_names": self.horse_names,
-                "cote_t0": self.cote_t0,
+                "cote_t1": self.cote_t1,
                 "odds_history": self.odds_history,
                 "ema_prob": self.ema_prob,
                 "ema_last_t": self.ema_last_t,
@@ -890,7 +860,7 @@ class Tracker:
         self.selected_nb_partants = snap.get("selected_nb_partants")
         self.favoris_order = snap.get("favoris_order") or []
         self.horse_names = snap.get("horse_names") or {}
-        self.cote_t0 = snap.get("cote_t0") or {}
+        self.cote_t1 = snap.get("cote_t1") or {}
         self.odds_history = snap.get("odds_history") or {}
         self.ema_prob = snap.get("ema_prob") or {}
         self.ema_last_t = snap.get("ema_last_t") or {}
@@ -972,11 +942,11 @@ class Tracker:
           partir de la derniere cote live vue (cote_live_last)."""
         horses = []
         for num, info in self.valuebet_seen.items():
-            cote_t0 = self.cote_t0.get(num)
+            cote_t1 = self.cote_t1.get(num)
             cote_live_finale = self.cote_live_last.get(num)
             pct_chute_finale = None
-            if cote_t0 is not None and cote_live_finale is not None and cote_t0 > 0:
-                pct_chute_finale = (cote_t0 - cote_live_finale) / cote_t0 * 100
+            if cote_t1 is not None and cote_live_finale is not None and cote_t1 > 0:
+                pct_chute_finale = (cote_t1 - cote_live_finale) / cote_t1 * 100
             marque_at = info.get("at")
             delai_signal_depart_min = None
             if marque_at is not None and self.depart_ts is not None:
@@ -984,7 +954,7 @@ class Tracker:
             horses.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
-                "coteT0": cote_t0,
+                "coteT1": cote_t1,
                 "pctChuteAuMarquage": info.get("pctChute"),
                 "marqueAt": marque_at,
                 "coteLiveFinale": cote_live_finale,
@@ -1110,19 +1080,6 @@ class Tracker:
                 prev_course_info,
             )
 
-            # Meme principe pour le journal des series temporelles de cotes
-            # (fichier separe, cf. ODDS_TIMESERIES_*) : on fige le buffer
-            # accumule pendant la course qu'on quitte avant qu'il ne soit
-            # reinitialise par start_tracking() juste apres. Ce journal
-            # couvre desormais TOUT le peloton (fusionne avec l'ancien
-            # race_snapshot) et sert donc aussi de groupe de controle.
-            prev_timeseries = dict(self.odds_timeseries_buffer)
-            prev_horse_names = dict(self.horse_names)
-            log_odds_timeseries_async(
-                prev_date, self.selected_reunion, self.selected_course, prev_label,
-                prev_timeseries, prev_horse_names, prev_course_info,
-            )
-
         self.selected_reunion = chosen["numReunion"]
         self.selected_course = chosen["course"]
         self.depart_ts = chosen["depart"] / 1000.0
@@ -1135,17 +1092,15 @@ class Tracker:
     def start_tracking(self):
         self.favoris_order = []
         self.horse_names = {}
-        self.cote_t0 = {}
+        self.cote_t1 = {}
         self.cote_live_last = {}
         self.ema_prob = {}
         self.ema_last_t = {}
         self.bigmove_seen = {}
         self.valuebet_seen = {}
-        self.odds_timeseries_buffer = defaultdict(list)
-        self.last_timeseries_sample_ts = 0.0
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
-        set_state(rows=[], snapLine="📸 Snapshot T0 au depart de la course — en attente…")
+        set_state(rows=[], snapLine="📸 Snapshot T1 (1min avant le depart) — en attente…")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -1330,29 +1285,31 @@ class Tracker:
         now = time.time()
         speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous (deja pendant le warm-up)
 
-        # -- capture (retardee) du snapshot T0 ---------------------------
-        # Le snapshot T0 n'est plus fige des le tout premier poll, mais
-        # seulement a l'heure de depart officielle de la course ("cote de
-        # depart"). Avant ce moment, on affiche un mode "warm-up" : tous les
-        # chevaux, tries du plus au moins favori, avec un message d'attente
-        # indiquant le temps restant avant le depart ; pas de % de chute, pas
-        # de masquage, pas de badge (rien de tout ca n'a de sens tant que la
-        # reference T0 n'existe pas).
+        # -- capture (retardee) du snapshot T1 ---------------------------
+        # Le snapshot T1 n'est plus fige des le tout premier poll, mais
+        # seulement a SNAPSHOT_BEFORE_DEPART_S (1min) AVANT l'heure de
+        # depart programmee (et non plus au depart lui-meme). Avant ce
+        # moment, on affiche un mode "warm-up" : tous les chevaux, tries du
+        # plus au moins favori, avec un message d'attente indiquant le
+        # temps restant avant la capture ; pas de % de chute, pas de
+        # masquage, pas de badge (rien de tout ca n'a de sens tant que la
+        # reference T1 n'existe pas).
         if not self.snapshot_taken:
-            depart_reached = self.depart_ts is not None and now >= self.depart_ts
-            if depart_reached:
+            snapshot_ts = (self.depart_ts - SNAPSHOT_BEFORE_DEPART_S) if self.depart_ts is not None else None
+            snapshot_reached = snapshot_ts is not None and now >= snapshot_ts
+            if snapshot_reached:
                 for num in nums:
-                    self.cote_t0.setdefault(num, gagnant_map[num]["ratio"])
+                    self.cote_t1.setdefault(num, gagnant_map[num]["ratio"])
                 self.snapshot_taken = True
             else:
                 rows = self.build_warmup_rows(gagnant_map)
-                if self.depart_ts is not None:
-                    remaining_s = max(0, int(self.depart_ts - now))
+                if snapshot_ts is not None:
+                    remaining_s = max(0, int(snapshot_ts - now))
                     m, s = divmod(remaining_s, 60)
                     remaining_str = f"{m}:{s:02d}"
-                    snap_msg = f"📸 Snapshot T0 au depart de la course — dans {remaining_str}"
+                    snap_msg = f"📸 Snapshot T1 (1min avant le depart) — dans {remaining_str}"
                 else:
-                    snap_msg = "📸 Snapshot T0 au depart de la course — en attente de l'heure de depart…"
+                    snap_msg = "📸 Snapshot T1 (1min avant le depart) — en attente de l'heure de depart…"
                 set_state(
                     rows=rows,
                     snapLine=snap_msg,
@@ -1363,13 +1320,13 @@ class Tracker:
                 self.maybe_save_snapshot()
                 return
 
-        # Cote T0 = snapshot fige au moment de la bascule warm-up -> mode
+        # Cote T1 = snapshot fige au moment de la bascule warm-up -> mode
         # normal ci-dessus. Pour un cheval qui apparaitrait APRES coup (rare :
         # partant declare tardivement), on prend sa toute premiere cote live
         # comme reference, comme avant.
         for num in nums:
-            if num not in self.cote_t0:
-                self.cote_t0[num] = gagnant_map[num]["ratio"]
+            if num not in self.cote_t1:
+                self.cote_t1[num] = gagnant_map[num]["ratio"]
 
         # Pour chaque cheval connu : cote Gagnant actuelle (brute, telle
         # qu'affichee par le PMU), probabilite lissee (EMA) il y a ~15s, et
@@ -1396,38 +1353,17 @@ class Tracker:
                 delta15 = (math.exp(-(math.log(ema_now) - math.log(ema_15))) - 1) * 100  # variation relative en %
             deltas[num] = (cote_g, ema_15, delta15)
 
-            cote_t0 = self.cote_t0.get(num)
+            cote_t1 = self.cote_t1.get(num)
             cote_live = cote_g
             if cote_live is not None:
                 self.cote_live_last[num] = cote_live
             pct_chute = None
-            if cote_t0 is not None and cote_live is not None and cote_t0 > 0:
+            if cote_t1 is not None and cote_live is not None and cote_t1 > 0:
                 # % de chute entre T0 et Live : positif = la cote a baisse
                 # (cheval devenu plus favori) ; negatif = la cote a monte
                 # (cheval devenu moins favori, "remonte").
-                pct_chute = (cote_t0 - cote_live) / cote_t0 * 100
-            ecarts[num] = (cote_t0, cote_live, pct_chute)
-
-        # --- echantillonnage des series temporelles (journal separe) -------
-        # Un point toutes les 15s, uniquement dans la fenetre [depart-5min,
-        # depart+5min] (depart = heure PROGRAMMEE, pas reelle, cf. discussion
-        # avec l'utilisateur : les courses partent souvent en retard, d'ou la
-        # marge de 5min de chaque cote). TOUT le peloton suivi (pas seulement
-        # les chevaux en chute) : ce journal sert aussi de groupe de controle
-        # (fusionne avec l'ancien race_snapshot, a la demande de l'utilisateur).
-        if self.depart_ts is not None:
-            in_window = (self.depart_ts - ODDS_TIMESERIES_WINDOW_BEFORE_S) <= now <= (self.depart_ts + ODDS_TIMESERIES_WINDOW_AFTER_S)
-            due = (now - self.last_timeseries_sample_ts) >= ODDS_TIMESERIES_SAMPLE_INTERVAL_S
-            if in_window and due:
-                self.last_timeseries_sample_ts = now
-                for num, (ct0, clive, pc) in ecarts.items():
-                    if ct0 is not None and clive is not None:
-                        self.odds_timeseries_buffer[num].append({
-                            "t": now,
-                            "coteT0": ct0,
-                            "coteLive": clive,
-                            "pctChute": pc,
-                        })
+                pct_chute = (cote_t1 - cote_live) / cote_t1 * 100
+            ecarts[num] = (cote_t1, cote_live, pct_chute)
 
         def sort_key(n):
             pc = ecarts[n][2]
@@ -1447,7 +1383,7 @@ class Tracker:
         for idx, num in enumerate(display_order):
             g = gagnant_map.get(num)
             cote_g, cote_g15, delta15 = deltas[num]
-            cote_t0, cote_live, pct_chute = ecarts[num]
+            cote_t1, cote_live, pct_chute = ecarts[num]
             spd = speed_map.get(num)
             is_fast = spd is not None and abs(spd) >= SPEED_THRESHOLD_PCT_PER_MIN
 
@@ -1502,7 +1438,7 @@ class Tracker:
             rows.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
-                "coteT0": cote_t0,
+                "coteT0": cote_t1,
                 "coteLive": cote_live,
                 "pctChute": pct_chute,
                 "delta15": delta15,
