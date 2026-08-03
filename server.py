@@ -24,6 +24,7 @@ import http.server
 import socketserver
 import http.client
 import io
+import zipfile
 import json
 import math
 import os
@@ -346,9 +347,9 @@ def build_odds_timeseries_csv():
     # Minutes ciblees, de T-5min a T+5min (T = depart programme)
     minute_offsets = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
     col_names = {
-        -5: "coteM5", -4: "coteM4", -3: "coteM3", -2: "coteM2", -1: "coteM1",
-        0: "coteDepart",
-        1: "coteP1", 2: "coteP2", 3: "coteP3", 4: "coteP4", 5: "coteP5",
+        -5: "CoteT-5", -4: "CoteT-4", -3: "CoteT-3", -2: "CoteT-2", -1: "CoteT-1",
+        0: "CoteT-0",
+        1: "CoteT+1", 2: "CoteT+2", 3: "CoteT+3", 4: "CoteT+4", 5: "CoteFinal",
     }
 
     buf = io.StringIO()
@@ -674,23 +675,31 @@ class LookaheadOddsLogger:
     independantes, dans son propre thread. Zero impact sur le comportement
     existant du bot -- uniquement une source supplementaire de donnees pour
     le meme journal odds_timeseries.jsonl (via log_odds_timeseries_async,
-    la meme fonction que le Tracker principal utilise)."""
+    la meme fonction que le Tracker principal utilise).
+
+    BUG CORRIGE : la version precedente ne suivait qu'UNE SEULE course a
+    la fois (la plus proche dans le temps). Or en France il y a tres
+    souvent plusieurs reunions en parallele (2-4 hippodromes en meme
+    temps) -- si les fenetres de deux courses se chevauchaient, la
+    seconde perdait sa portion "avant depart" (ratee pendant que la
+    premiere etait suivie), et une troisieme pouvait meme etre ratee
+    entierement si son depart+5min passait avant que ce mecanisme ne se
+    libere. Desormais, TOUTES les courses actuellement dans leur fenetre
+    [depart-5min, depart+5min] sont suivies EN PARALLELE (une entree par
+    course dans self.active), avec une requete HTTP independante pour
+    chacune a chaque tour de boucle."""
 
     def __init__(self, tracker):
         self.tracker = tracker
-        self.current_key = None          # (reunion, course) actuellement suivie en avance
-        self.current_course_info = None
-        self.buffer = defaultdict(list)  # num -> [{"t":..., "coteInstant":...}, ...] -- juste des prises de cote brutes, pas de "reference"
-        self.horse_names = {}
-        self.last_sample_ts = 0.0
+        # cle (reunion, course) -> {"buffer":..., "horse_names":..., "last_sample_ts":..., "course_info":...}
+        self.active = {}
         self.flushed_keys = set()        # eviter de logguer deux fois la meme course
 
-    def pick_target_course(self):
-        """Choisit, parmi tracker.all_courses, la course la plus proche dans
-        le temps dont on est dans la fenetre [depart-5min, depart+5min] et
-        qui n'a pas deja ete flushee par ce mecanisme."""
+    def candidates_in_window(self):
+        """Toutes les courses de tracker.all_courses actuellement dans la
+        fenetre [depart-5min, depart+5min] et pas encore flushees."""
         now = time.time()
-        candidates = []
+        out = []
         for c in self.tracker.all_courses:
             depart_ms = c.get("depart")
             if not depart_ms:
@@ -700,40 +709,47 @@ class LookaheadOddsLogger:
                 continue
             depart_s = depart_ms / 1000.0
             if (depart_s - ODDS_TIMESERIES_WINDOW_BEFORE_S) <= now <= (depart_s + ODDS_TIMESERIES_WINDOW_AFTER_S):
-                candidates.append(c)
-        if not candidates:
-            return None
-        candidates.sort(key=lambda c: c["depart"])
-        return candidates[0]
+                out.append(c)
+        return out
 
-    def flush_current(self):
-        if self.current_key is not None and self.buffer:
-            reunion, course = self.current_key
+    def flush(self, key):
+        state = self.active.pop(key, None)
+        if state is None:
+            return
+        if state["buffer"]:
+            reunion, course = key
             label = f"R{reunion}C{course}"
             date_str = date_pmu(datetime.now(PARIS_TZ))
             log_odds_timeseries_async(date_str, reunion, course, label,
-                                       dict(self.buffer), dict(self.horse_names),
-                                       self.current_course_info)
-            self.flushed_keys.add(self.current_key)
-        self.buffer = defaultdict(list)
-        self.horse_names = {}
+                                       dict(state["buffer"]), dict(state["horse_names"]),
+                                       state["course_info"])
+        self.flushed_keys.add(key)
 
     def poll_once(self):
-        target = self.pick_target_course()
-        if target is None:
-            if self.current_key is not None:
-                self.flush_current()
-                self.current_key = None
-                self.current_course_info = None
-            return
+        candidates = self.candidates_in_window()
+        candidate_keys = {(c["numReunion"], c["course"]) for c in candidates}
 
-        key = (target["numReunion"], target["course"])
-        if key != self.current_key:
-            self.flush_current()
-            self.current_key = key
-            self.current_course_info = target
-            self.last_sample_ts = 0.0
+        # 1) les courses actives dont la fenetre est terminee -> flush
+        for key in list(self.active.keys()):
+            if key not in candidate_keys:
+                self.flush(key)
 
+        # 2) les nouvelles courses qui entrent dans la fenetre -> demarrage
+        for c in candidates:
+            key = (c["numReunion"], c["course"])
+            if key not in self.active:
+                self.active[key] = {
+                    "buffer": defaultdict(list),
+                    "horse_names": {},
+                    "last_sample_ts": 0.0,
+                    "course_info": c,
+                }
+
+        # 3) poll independant de CHAQUE course actuellement suivie en avance
+        for key, state in list(self.active.items()):
+            self._poll_one(key, state)
+
+    def _poll_one(self, key, state):
         reunion, course = key
         date_str = date_pmu(datetime.now(PARIS_TZ))
         path = (f"{PMU_CIT_PREFIX}programme/{date_str}/R{reunion}/C{course}"
@@ -748,18 +764,18 @@ class LookaheadOddsLogger:
         if not gagnant_map:
             return
         for num, info in gagnant_map.items():
-            self.horse_names[num] = info["nom"]
+            state["horse_names"][num] = info["nom"]
 
         now = time.time()
-        if (now - self.last_sample_ts) < ODDS_TIMESERIES_SAMPLE_INTERVAL_S:
+        if (now - state["last_sample_ts"]) < ODDS_TIMESERIES_SAMPLE_INTERVAL_S:
             return
-        self.last_sample_ts = now
+        state["last_sample_ts"] = now
 
         for num, info in gagnant_map.items():
             cote_instant = info.get("ratio")
             if cote_instant is None:
                 continue
-            self.buffer[num].append({
+            state["buffer"][num].append({
                 "t": now,
                 "coteInstant": cote_instant,
             })
@@ -1528,11 +1544,81 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_odds_timeseries_csv()
         elif self.path.startswith("/api/odds-timeseries/reset"):
             self.handle_odds_timeseries_reset()
+        elif self.path.startswith("/api/backup.zip"):
+            self.handle_backup()
         elif self.path == "/":
             self.path = "/pmu_bot.html"
             super().do_GET()
         else:
             super().do_GET()
+
+    def do_POST(self):
+        if self.path.startswith("/api/restore"):
+            self.handle_restore()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def handle_backup(self):
+        """Sauvegarde complete des donnees brutes (les 2 fichiers .jsonl,
+        pas les CSV derives) dans un .zip -- a telecharger AVANT toute
+        modification/redeploiement du bot, pour pouvoir les restaurer
+        ensuite via /api/restore si le systeme de fichiers est reinitialise
+        (Railway sans volume persistant efface tout a chaque redeploiement)."""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path, arcname in [
+                (VALUEBET_LOG_FILE, "valuebet_log.jsonl"),
+                (ODDS_TIMESERIES_LOG_FILE, "odds_timeseries.jsonl"),
+            ]:
+                try:
+                    with open(path, "rb") as f:
+                        zf.writestr(arcname, f.read())
+                except FileNotFoundError:
+                    zf.writestr(arcname, "")  # fichier pas encore cree -> vide dans le zip, pas d'erreur
+        body = buf.getvalue()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", 'attachment; filename="pmu_bot_backup.zip"')
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_restore(self):
+        """Restaure les 2 fichiers .jsonl a partir d'un .zip envoye en POST
+        (le meme format que celui genere par /api/backup.zip). ECRASE les
+        fichiers actuels -- a utiliser juste apres un redeploiement pour
+        recuperer les donnees sauvegardees avant modification du bot."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            buf = io.BytesIO(body)
+            restored = []
+            with zipfile.ZipFile(buf, "r") as zf:
+                for arcname, path in [
+                    ("valuebet_log.jsonl", VALUEBET_LOG_FILE),
+                    ("odds_timeseries.jsonl", ODDS_TIMESERIES_LOG_FILE),
+                ]:
+                    try:
+                        data = zf.read(arcname)
+                    except KeyError:
+                        continue
+                    if not data:
+                        continue
+                    with open(path, "wb") as f:
+                        f.write(data)
+                    restored.append(arcname)
+            msg = f"Restaure : {', '.join(restored) if restored else '(rien -- zip vide ou fichiers absents du zip)'}"
+            resp = msg.encode("utf-8")
+            self.send_response(200)
+        except Exception as e:
+            resp = f"Echec de la restauration : {e}".encode("utf-8")
+            self.send_response(500)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(resp)))
+        self.end_headers()
+        self.wfile.write(resp)
 
     def handle_valuebet_csv(self):
         body = build_valuebet_csv().encode("utf-8-sig")  # BOM pour un Excel/LibreOffice content
