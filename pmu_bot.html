@@ -235,8 +235,8 @@
   .row.flash-up{ background:var(--success-bg); }
   .row.flash-down{ background:var(--danger-bg); }
 
-  /* Un seul signal visuel fort, déclenché dès qu'un cheval a chuté de 10%
-     ou plus (% Chute, écart T0 -> Live), marquage définitif pour la course. */
+  /* Un seul signal visuel fort, déclenché dès qu'un cheval a chuté de 15%
+     ou plus (% Chute, écart T1 -> Live), marquage définitif pour la course. */
   .row.row-valuebet{
     border:2px solid var(--tote-fg);
     background:linear-gradient(0deg, rgba(232,178,77,.12), rgba(232,178,77,.12)), var(--surface);
@@ -424,7 +424,7 @@ function buildRow(num){
       <div class="cote"></div>
     </div>
     <div class="row-bottom">
-      <span class="stat"><span class="lbl">T0</span><span class="var flat">—</span></span>
+      <span class="stat"><span class="lbl">T1</span><span class="var flat">—</span></span>
       <span class="stat-dot"></span>
       <span class="stat"><span class="lbl">Live</span><span class="vitesse flat">—</span></span>
     </div>
@@ -471,7 +471,7 @@ function renderTable(rows){
     const coteT0Str = coteT0 !== undefined ? coteT0.toFixed(1) : "—";
     const coteLiveStr = coteLive !== undefined ? coteLive.toFixed(1) : "—";
     const pctChuteStr = pctChute !== undefined ? `${pctChute >= 0 ? '+' : ''}${pctChute.toFixed(1)}%` : "—";
-    // Avant la capture du snapshot T0 (mode "warm-up"), il n'y a pas encore
+    // Avant la capture du snapshot T1 (mode "warm-up"), il n'y a pas encore
     // de % de chute a afficher : on montre la cote Gagnant en direct a la
     // place, ce qui permet quand meme de classer les chevaux par favoritisme.
     const mainStr = pctChute !== undefined ? pctChuteStr : coteLiveStr;
@@ -505,15 +505,15 @@ function renderTable(rows){
     }
     if(pctChute !== undefined) lastGagnant[num] = pctChute;
     coteEl.title = pctChute !== undefined
-      ? "% de chute entre la cote au moment du snapshot (T0) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le début du suivi"
-      : "Cote Gagnant en direct — classement du plus au moins favori, snapshot T0 pas encore pris";
+      ? "% de chute entre la cote au moment du snapshot (T1, 1min avant le départ) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le snapshot"
+      : "Cote Gagnant en direct — classement du plus au moins favori, snapshot T1 pas encore pris";
 
-    // Cote T0 : valeur de référence figée, affichage neutre (ne "flashe" pas)
+    // Cote T1 : valeur de référence figée, affichage neutre (ne "flashe" pas)
     const deltaEl = row.querySelector('.var');
     if(deltaEl.textContent !== coteT0Str) deltaEl.textContent = coteT0Str;
     deltaEl.classList.remove('up','down','flat');
     deltaEl.classList.add('flat');
-    deltaEl.title = "Cote Gagnant au moment du snapshot (T0)";
+    deltaEl.title = "Cote Gagnant au moment du snapshot (T1, 1min avant le départ)";
 
     const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
     const isFast = !!r.isFast;
@@ -541,7 +541,7 @@ function renderTable(rows){
     const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
-      valuebetEl.title = `Chute de ${pctChuteStr} depuis le snapshot T0 (seuil de déclenchement : 10%)`;
+      valuebetEl.title = `Chute de ${pctChuteStr} depuis le snapshot T1 (seuil de déclenchement : 15%)`;
     }
     row.classList.toggle('row-valuebet', isValuebet);
 
