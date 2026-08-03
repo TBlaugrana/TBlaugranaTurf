@@ -443,16 +443,36 @@ def get_state_json():
 
 
 # ---------------------------------------------------------------------------
-# Connexion HTTPS persistante vers l'API PMU (reutilisee entre les appels)
+# Connexion HTTPS persistante vers l'API PMU, reutilisee entre les appels --
+# mais UNE PAR THREAD (threading.local), jamais partagee entre threads.
+#
+# BUG CORRIGE : avant, une seule connexion par HOTE etait partagee (dict
+# global `_conns`, sans verrou) entre TOUS les threads qui appellent
+# http_get_json -- le Tracker principal (poll toutes les 0.5s), le
+# LookaheadOddsLogger (poll toutes les 2s, pour potentiellement plusieurs
+# courses en parallele), et les threads worker() de recuperation des
+# rapports definitifs (jusqu'a 20 tentatives par course terminee). Un objet
+# http.client.HTTPSConnection n'est PAS thread-safe : deux threads qui font
+# request()/getresponse() en meme temps sur la MEME connexion melangent les
+# echanges (reponse corrompue, exception, timeout...). Cote appelant
+# (_poll_one notamment), l'exception etait juste avalee et tout le sample de
+# cote pour CETTE minute et TOUTE la course etait perdu -- exactement le
+# symptome observe dans le CSV (colonnes CoteT-1/CoteT-0/CoteFinal entierement
+# vides pour une course donnee). Desormais chaque thread a sa propre
+# connexion par hote : plus aucun partage, donc plus de corruption possible.
 # ---------------------------------------------------------------------------
-_conns = {}
+_thread_local = threading.local()
 
 
 def http_get_json(host, path):
-    conn = _conns.get(host)
+    conns = getattr(_thread_local, "conns", None)
+    if conns is None:
+        conns = {}
+        _thread_local.conns = conns
+    conn = conns.get(host)
     if conn is None:
         conn = http.client.HTTPSConnection(host, timeout=FETCH_TIMEOUT_S)
-        _conns[host] = conn
+        conns[host] = conn
     try:
         conn.request("GET", path, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
         resp = conn.getresponse()
@@ -461,8 +481,9 @@ def http_get_json(host, path):
             raise RuntimeError(f"HTTP {resp.status} sur {host}{path}")
         return json.loads(data)
     except Exception:
-        _conns.pop(host, None)  # force une reconnexion propre au prochain appel
+        conns.pop(host, None)  # force une reconnexion propre au prochain appel (dans ce meme thread)
         raise
+
 
 
 def date_pmu(d):
