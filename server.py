@@ -158,7 +158,7 @@ RAPPORTS_FETCH_RETRY_DELAY_S = 60  # delai entre deux tentatives (~20 min de fen
 # ---------------------------------------------------------------------------
 ODDS_TIMESERIES_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "odds_timeseries.jsonl")
 ODDS_TIMESERIES_LOG_LOCK = threading.Lock()
-ODDS_TIMESERIES_SAMPLE_INTERVAL_S = 60   # un point toutes les 60s (1min)
+ODDS_TIMESERIES_SAMPLE_INTERVAL_S = 30   # un point toutes les 30s (permet des colonnes par demi-minute)
 ODDS_TIMESERIES_WINDOW_BEFORE_S = 5 * 60  # a partir de T-5min (T = heure de depart PROGRAMMEE, cf. self.depart_ts)
 ODDS_TIMESERIES_WINDOW_AFTER_S = 5 * 60   # jusqu'a T+5min
 
@@ -333,24 +333,40 @@ def build_valuebet_csv():
     return buf.getvalue()
 
 
+def _col_name_for_offset(m):
+    """Nom de colonne pour un decalage `m` (en minutes, multiple de 0.5) par
+    rapport au depart programme. Garde les noms historiques pour les
+    minutes entieres (CoteT-5, CoteT-0, CoteT+1, ...) et le nom special
+    CoteFinal pour T+5 ; ajoute les demi-minutes sous la forme CoteT-4min30
+    / CoteT+0min30."""
+    if m == 5.0:
+        return "CoteFinal"
+    if m == 0:
+        return "CoteT-0"
+    sign = "-" if m < 0 else "+"
+    abs_m = abs(m)
+    whole = int(abs_m)
+    if abs_m == whole:
+        return f"CoteT{sign}{whole}"
+    return f"CoteT{sign}{whole}min30"
+
+
 def build_odds_timeseries_csv():
     """Lit le journal odds_timeseries.jsonl (une ligne JSON par course
     francaise suivie, contenant TOUT le peloton avec un point toutes les
     ODDS_TIMESERIES_SAMPLE_INTERVAL_S secondes de T-5min a T+5min autour du
     depart PROGRAMME) et le met en forme "large" : UNE LIGNE PAR CHEVAL,
-    avec une colonne de cote par minute (coteM5 .. coteDepart .. coteP5),
-    plutot qu'une ligne par (cheval, instant). Chaque colonne prend
-    l'echantillon le plus proche de la minute visee (tolerance 30s ;
-    au-dela, vide). Format volontairement simple : date et label (ex.
-    R1C1) bien separes, discipline explicite, et seulement les rapports
-    Simple Gagnant / Simple Place (pas de classement d'arrivee)."""
-    # Minutes ciblees, de T-5min a T+5min (T = depart programme)
-    minute_offsets = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5]
-    col_names = {
-        -5: "CoteT-5", -4: "CoteT-4", -3: "CoteT-3", -2: "CoteT-2", -1: "CoteT-1",
-        0: "CoteT-0",
-        1: "CoteT+1", 2: "CoteT+2", 3: "CoteT+3", 4: "CoteT+4", 5: "CoteFinal",
-    }
+    avec une colonne de cote toutes les 30s (CoteT-5 .. CoteT-0min30 ..
+    CoteT-0 .. CoteT+0min30 .. CoteFinal), plutot qu'une ligne par
+    (cheval, instant). Chaque colonne prend l'echantillon le plus proche de
+    l'instant vise (tolerance = la moitie de l'intervalle d'echantillonnage ;
+    au-dela, vide). Format volontairement simple : date et label (ex. R1C1)
+    bien separes, discipline explicite, et seulement les rapports Simple
+    Gagnant / Simple Place (pas de classement d'arrivee)."""
+    # Decalages cibles, de T-5min a T+5min par pas de 30s (= 0.5 min)
+    minute_offsets = [i / 2 for i in range(-10, 11)]
+    col_names = {m: _col_name_for_offset(m) for m in minute_offsets}
+    tolerance_s = ODDS_TIMESERIES_SAMPLE_INTERVAL_S / 2  # evite toute ambiguite entre deux colonnes voisines
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -378,9 +394,9 @@ def build_odds_timeseries_csv():
                         depart_ts = None
                 for h in (entry.get("horses") or []):
                     samples = h.get("samples") or []
-                    # pour chaque minute ciblee, on prend l'echantillon le
-                    # plus proche (tolerance 30s = la moitie de l'intervalle
-                    # d'echantillonnage)
+                    # pour chaque instant cible, on prend l'echantillon le
+                    # plus proche (tolerance = moitie de l'intervalle
+                    # d'echantillonnage, pour ne jamais chevaucher la colonne voisine)
                     cote_par_minute = {}
                     if depart_ts is not None:
                         for m in minute_offsets:
@@ -392,7 +408,7 @@ def build_odds_timeseries_csv():
                                 if t is None:
                                     continue
                                 diff = abs(t - target_s)
-                                if diff <= 30 and (best_diff is None or diff < best_diff):
+                                if diff <= tolerance_s and (best_diff is None or diff < best_diff):
                                     best = s.get("coteInstant")
                                     best_diff = diff
                             cote_par_minute[m] = best
