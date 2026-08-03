@@ -73,8 +73,8 @@ GAINERS_TOP_N = 6                # nombre de chevaux affiches (plus forte progre
 # reelle). Reevalue a CHAQUE poll sur la cote LIVE : un cheval qui rentre
 # dans la plage apparait immediatement, un cheval qui en sort disparait
 # immediatement (pas de marquage definitif, contrairement a bigmove/valuebet).
-COTE_RANGE_MIN = 0.0
-COTE_RANGE_MAX = 20.0
+COTE_RANGE_MIN = 1.0
+COTE_RANGE_MAX = 10.0
 
 # Lissage exponentiel (EMA) applique a la probabilite implicite (Gagnant) avant
 # tout calcul de delta/vitesse, pour filtrer le bruit tick-par-tick (la cote
@@ -109,7 +109,7 @@ BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la der
 # ce seuil (contrairement a bigmove qui reste definitif), independamment de
 # la vitesse de variation ou d'une fenetre de temps avant le depart.
 VALUEBET_CHUTE_THRESHOLD_PCT = 15.0
-SNAPSHOT_BEFORE_DEPART_S = 60  # le snapshot T1 (reference pour le % de chute) est capture 1min AVANT le depart programme, plus la course avance officiellement pas au depart lui-meme
+SNAPSHOT_AFTER_DEPART_S = 60  # le snapshot T1 (reference pour le % de chute) est capture 1min APRES le depart programme
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
@@ -1116,7 +1116,7 @@ class Tracker:
         self.valuebet_seen = {}
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
-        set_state(rows=[], snapLine="📸 Snapshot T1 (1min avant le depart) — en attente…")
+        set_state(rows=[], snapLine="📸 Snapshot T1 (1min après le depart) — en attente…")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -1263,13 +1263,18 @@ class Tracker:
         return " · ".join(parts)
 
     def build_warmup_rows(self, gagnant_map):
-        """Lignes affichees avant la capture du snapshot T0 : tous les
-        chevaux avec une cote live, tries du plus au moins favori (cote
-        decimale croissante), sans masquage ni badge (chute/vitesse/valuebet
-        n'ont pas de sens tant que T0 n'est pas fige)."""
+        """Lignes affichees avant la capture du snapshot T1 : tous les
+        chevaux avec une cote live DANS [COTE_RANGE_MIN, COTE_RANGE_MAX],
+        tries du plus au moins favori (cote decimale croissante), sans
+        masquage ni badge (chute/vitesse/valuebet n'ont pas de sens tant
+        que T1 n'est pas fige). Filtre d'AFFICHAGE uniquement -- le suivi
+        interne (cote_t1, valuebet, logging) reste actif pour TOUS les
+        chevaux, filtres ou non de l'affichage."""
         rows = []
         ordered = sorted(gagnant_map.items(), key=lambda kv: kv[1]["ratio"])
         for num, info in ordered:
+            if not (COTE_RANGE_MIN <= info["ratio"] <= COTE_RANGE_MAX):
+                continue
             rows.append({
                 "num": num,
                 "nom": info["nom"],
@@ -1303,15 +1308,14 @@ class Tracker:
 
         # -- capture (retardee) du snapshot T1 ---------------------------
         # Le snapshot T1 n'est plus fige des le tout premier poll, mais
-        # seulement a SNAPSHOT_BEFORE_DEPART_S (1min) AVANT l'heure de
-        # depart programmee (et non plus au depart lui-meme). Avant ce
-        # moment, on affiche un mode "warm-up" : tous les chevaux, tries du
-        # plus au moins favori, avec un message d'attente indiquant le
-        # temps restant avant la capture ; pas de % de chute, pas de
-        # masquage, pas de badge (rien de tout ca n'a de sens tant que la
-        # reference T1 n'existe pas).
+        # seulement a SNAPSHOT_AFTER_DEPART_S (1min) APRES l'heure de
+        # depart programmee. Avant ce moment, on affiche un mode "warm-up" :
+        # tous les chevaux, tries du plus au moins favori, avec un message
+        # d'attente indiquant le temps restant avant la capture ; pas de %
+        # de chute, pas de masquage, pas de badge (rien de tout ca n'a de
+        # sens tant que la reference T1 n'existe pas).
         if not self.snapshot_taken:
-            snapshot_ts = (self.depart_ts - SNAPSHOT_BEFORE_DEPART_S) if self.depart_ts is not None else None
+            snapshot_ts = (self.depart_ts + SNAPSHOT_AFTER_DEPART_S) if self.depart_ts is not None else None
             snapshot_reached = snapshot_ts is not None and now >= snapshot_ts
             if snapshot_reached:
                 for num in nums:
@@ -1323,9 +1327,9 @@ class Tracker:
                     remaining_s = max(0, int(snapshot_ts - now))
                     m, s = divmod(remaining_s, 60)
                     remaining_str = f"{m}:{s:02d}"
-                    snap_msg = f"📸 Snapshot T1 (1min avant le depart) — dans {remaining_str}"
+                    snap_msg = f"📸 Snapshot T1 (1min après le depart) — dans {remaining_str}"
                 else:
-                    snap_msg = "📸 Snapshot T1 (1min avant le depart) — en attente de l'heure de depart…"
+                    snap_msg = "📸 Snapshot T1 (1min après le depart) — en attente de l'heure de depart…"
                 set_state(
                     rows=rows,
                     snapLine=snap_msg,
