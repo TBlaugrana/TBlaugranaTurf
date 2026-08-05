@@ -109,7 +109,7 @@ BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la der
 # ce seuil (contrairement a bigmove qui reste definitif), independamment de
 # la vitesse de variation ou d'une fenetre de temps avant le depart.
 VALUEBET_CHUTE_THRESHOLD_PCT = 15.0
-SNAPSHOT_AFTER_DEPART_S = 60  # le snapshot T1 (reference pour le % de chute) est capture 1min APRES le depart programme
+SNAPSHOT_BEFORE_DEPART_S = 30  # le snapshot T1 (reference pour le % de chute) est capture 30s AVANT le depart programme
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
@@ -1153,7 +1153,7 @@ class Tracker:
         self.valuebet_seen = {}
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
-        set_state(rows=[], snapLine="📸 Snapshot T1 (1min après le depart) — en attente…")
+        set_state(rows=[], snapLine="📸 Snapshot T1 (30s avant le depart) — en attente…")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -1345,14 +1345,14 @@ class Tracker:
 
         # -- capture (retardee) du snapshot T1 ---------------------------
         # Le snapshot T1 n'est plus fige des le tout premier poll, mais
-        # seulement a SNAPSHOT_AFTER_DEPART_S (1min) APRES l'heure de
+        # seulement a SNAPSHOT_BEFORE_DEPART_S (30s) AVANT l'heure de
         # depart programmee. Avant ce moment, on affiche un mode "warm-up" :
         # tous les chevaux, tries du plus au moins favori, avec un message
         # d'attente indiquant le temps restant avant la capture ; pas de %
         # de chute, pas de masquage, pas de badge (rien de tout ca n'a de
         # sens tant que la reference T1 n'existe pas).
         if not self.snapshot_taken:
-            snapshot_ts = (self.depart_ts + SNAPSHOT_AFTER_DEPART_S) if self.depart_ts is not None else None
+            snapshot_ts = (self.depart_ts - SNAPSHOT_BEFORE_DEPART_S) if self.depart_ts is not None else None
             snapshot_reached = snapshot_ts is not None and now >= snapshot_ts
             if snapshot_reached:
                 for num in nums:
@@ -1364,9 +1364,9 @@ class Tracker:
                     remaining_s = max(0, int(snapshot_ts - now))
                     m, s = divmod(remaining_s, 60)
                     remaining_str = f"{m}:{s:02d}"
-                    snap_msg = f"📸 Snapshot T1 (1min après le depart) — dans {remaining_str}"
+                    snap_msg = f"📸 Snapshot T1 (30s avant le depart) — dans {remaining_str}"
                 else:
-                    snap_msg = "📸 Snapshot T1 (1min après le depart) — en attente de l'heure de depart…"
+                    snap_msg = "📸 Snapshot T1 (30s avant le depart) — en attente de l'heure de depart…"
                 set_state(
                     rows=rows,
                     snapLine=snap_msg,
@@ -1422,6 +1422,23 @@ class Tracker:
                 pct_chute = (cote_t1 - cote_live) / cote_t1 * 100
             ecarts[num] = (cote_t1, cote_live, pct_chute)
 
+        # VALUEBET (signal unique par course) : parmi les chevaux dont la
+        # cote live est DANS [COTE_RANGE_MIN, COTE_RANGE_MAX] et dont le %
+        # de chute atteint VALUEBET_CHUTE_THRESHOLD_PCT, on ne retient QUE
+        # celui qui a la plus grosse chute -- pas plusieurs signaux
+        # simultanes possibles. Recalcule a chaque poll (pas de "collage" :
+        # si un autre cheval prend la tete, le signal se deplace).
+        valuebet_winner_num = None
+        valuebet_winner_pct = None
+        for num, (ct1, clive, pc) in ecarts.items():
+            if pc is None or pc < VALUEBET_CHUTE_THRESHOLD_PCT:
+                continue
+            if clive is None or clive < COTE_RANGE_MIN or clive > COTE_RANGE_MAX:
+                continue
+            if valuebet_winner_pct is None or pc > valuebet_winner_pct:
+                valuebet_winner_pct = pc
+                valuebet_winner_num = num
+
         def sort_key(n):
             pc = ecarts[n][2]
             return (pc is None, -(pc if pc is not None else 0))
@@ -1470,17 +1487,21 @@ class Tracker:
             # est par ailleurs marque bigmove/valuebet (priorite absolue)
             is_remonte = pct_chute is not None and pct_chute < 0
 
-            # VALUEBET : marquage actif tant que la cote d'un cheval a chute
-            # (% Chute, ecart T0 -> Live) de VALUEBET_CHUTE_THRESHOLD_PCT (10%)
-            # ou plus. Des que pct_chute repasse sous ce seuil (meme encore
-            # positif, ex. 12% -> 8%, ou negatif si la cote remonte au-dessus
-            # de T0), le marquage valuebet est retire — le cheval perd son
-            # statut valuebet. S'il rechute a nouveau a 10%+ par la suite, il
-            # peut redevenir valuebet.
-            if pct_chute is not None and pct_chute >= VALUEBET_CHUTE_THRESHOLD_PCT:
+            # VALUEBET : desormais un SEUL signal possible par course -- le
+            # cheval retenu est celui calcule plus haut (valuebet_winner_num),
+            # la plus grosse chute (>= VALUEBET_CHUTE_THRESHOLD_PCT) parmi les
+            # chevaux dans la plage de cote visible [COTE_RANGE_MIN,
+            # COTE_RANGE_MAX]. Tout autre cheval perd son marquage valuebet
+            # immediatement (self.valuebet_seen ne contient jamais plus d'une
+            # entree). Le "at" (heure de premier marquage) est preserve tant
+            # que c'est le MEME cheval qui reste le gagnant d'un poll a
+            # l'autre ; il est reinitialise si le gagnant change.
+            if num == valuebet_winner_num:
                 prev_vb = self.valuebet_seen.get(num)
                 if prev_vb is None:
                     self.valuebet_seen[num] = {"pctChute": pct_chute, "at": now}
+                else:
+                    prev_vb["pctChute"] = pct_chute
             else:
                 self.valuebet_seen.pop(num, None)
             is_valuebet = num in self.valuebet_seen
