@@ -235,8 +235,10 @@
   .row.flash-up{ background:var(--success-bg); }
   .row.flash-down{ background:var(--danger-bg); }
 
-  /* Un seul signal visuel fort, déclenché dès qu'un cheval a chuté de 15%
-     ou plus (% Chute, écart T1 -> Live), marquage définitif pour la course. */
+  /* Un seul signal visuel fort, déclenché dès qu'un cheval a chuté de 5%
+     ou plus (% Chute, écart T1 -> Live), évalué UNE FOIS à T+30s après le
+     départ, marquage définitif pour la course (reste visible même si la
+     cote ressort de la plage 1-10 ensuite). */
   .row.row-valuebet{
     border:2px solid var(--tote-fg);
     background:linear-gradient(0deg, rgba(232,178,77,.12), rgba(232,178,77,.12)), var(--surface);
@@ -505,7 +507,7 @@ function renderTable(rows){
     }
     if(pctChute !== undefined) lastGagnant[num] = pctChute;
     coteEl.title = pctChute !== undefined
-      ? "% de chute entre la cote au moment du snapshot (T1, 1min avant le départ) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le snapshot"
+      ? "% de chute entre la cote au moment du snapshot (T1, 2min30 avant le départ) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le snapshot"
       : "Cote Gagnant en direct — classement du plus au moins favori, snapshot T1 pas encore pris";
 
     // Cote T1 : valeur de référence figée, affichage neutre (ne "flashe" pas)
@@ -541,7 +543,7 @@ function renderTable(rows){
     const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
-      valuebetEl.title = `Chute de ${pctChuteStr} depuis le snapshot T1 (seuil de déclenchement : 15%)`;
+      valuebetEl.title = `Chute de ${pctChuteStr} depuis le snapshot T1 (seuil : 5%, évalué une fois à T+30s après le départ, figé ensuite)`;
     }
     row.classList.toggle('row-valuebet', isValuebet);
 
