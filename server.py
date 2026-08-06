@@ -108,8 +108,9 @@ BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la der
 # est marque valuebet. Ce marquage est RETIRE des que pctChute repasse sous
 # ce seuil (contrairement a bigmove qui reste definitif), independamment de
 # la vitesse de variation ou d'une fenetre de temps avant le depart.
-VALUEBET_CHUTE_THRESHOLD_PCT = 15.0
-SNAPSHOT_BEFORE_DEPART_S = 30  # le snapshot T1 (reference pour le % de chute) est capture 30s AVANT le depart programme
+VALUEBET_CHUTE_THRESHOLD_PCT = 5.0
+SNAPSHOT_BEFORE_DEPART_S = 150  # le snapshot T1 (reference pour le % de chute) est capture 2min30 AVANT le depart programme
+VALUEBET_EVAL_AFTER_DEPART_S = 30  # evaluation UNIQUE du signal valuebet, 30s APRES le depart programme (pas un recalcul continu)
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
@@ -445,6 +446,24 @@ STATE = {
     "departTs": None,
     "rows": [],
     "updatedAt": None,
+}
+
+# ---------------------------------------------------------------------------
+# Indicateur de sante minimal, expose via GET /api/health -- permet de
+# verifier en direct que les deux mecanismes de suivi tournent VRAIMENT
+# (pas juste "le processus n'a pas crashe" -- une panne silencieuse type
+# "le thread tourne mais toutes les requetes echouent en boucle" ne se
+# voit pas autrement que par un poll qui ne se met plus a jour). Ajoute
+# suite a un incident ou le suivi s'est arrete de collecter des la
+# mi-journee sans que rien ne l'indique avant le lendemain (analyse du CSV).
+# Pas de verrou dedie : simples int/str/None, ecriture atomique en Python.
+# ---------------------------------------------------------------------------
+HEALTH = {
+    "tracker_last_ok_ts": None,
+    "tracker_last_error": None,
+    "lookahead_last_ok_ts": None,
+    "lookahead_last_error": None,
+    "lookahead_active_courses": 0,
 }
 
 
@@ -821,8 +840,12 @@ class LookaheadOddsLogger:
         while True:
             try:
                 self.poll_once()
+                HEALTH["lookahead_last_ok_ts"] = time.time()
+                HEALTH["lookahead_last_error"] = None
             except Exception as e:
+                HEALTH["lookahead_last_error"] = repr(e)
                 print(f"[LOOKAHEAD] erreur boucle : {e!r}")
+            HEALTH["lookahead_active_courses"] = len(self.active)
             time.sleep(2.0)  # frequence plus lache que le Tracker principal (0.5s), pour limiter la charge API additionnelle
 
 
@@ -847,7 +870,8 @@ class Tracker:
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
-        self.valuebet_seen = {}   # num -> {"pctChute": ..., "at": ...} une fois le seuil de chute franchi ; retire si la cote remonte ensuite (voir handle_odds)
+        self.valuebet_seen = {}   # num -> {"pctChute": ..., "at": ...} -- rempli UNE SEULE FOIS, a l'evaluation T+30s (voir valuebet_eval_done), puis fige pour le reste de la course
+        self.valuebet_eval_done = False  # True des que l'evaluation unique du signal valuebet (a VALUEBET_EVAL_AFTER_DEPART_S) a eu lieu pour cette course
         self.tracking_started_at = None  # timestamp du debut du suivi de la course en cours (informatif)
         self.snapshot_taken = False      # True des que le snapshot T0 a ete capture (bascule mode warm-up -> mode normal)
         self.last_reprog = 0.0
@@ -1151,9 +1175,10 @@ class Tracker:
         self.ema_last_t = {}
         self.bigmove_seen = {}
         self.valuebet_seen = {}
+        self.valuebet_eval_done = False
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
-        set_state(rows=[], snapLine="📸 Snapshot T1 (30s avant le depart) — en attente…")
+        set_state(rows=[], snapLine="📸 Snapshot T1 (2min30 avant le depart) — en attente…")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -1345,7 +1370,7 @@ class Tracker:
 
         # -- capture (retardee) du snapshot T1 ---------------------------
         # Le snapshot T1 n'est plus fige des le tout premier poll, mais
-        # seulement a SNAPSHOT_BEFORE_DEPART_S (30s) AVANT l'heure de
+        # seulement a SNAPSHOT_BEFORE_DEPART_S (2min30) AVANT l'heure de
         # depart programmee. Avant ce moment, on affiche un mode "warm-up" :
         # tous les chevaux, tries du plus au moins favori, avec un message
         # d'attente indiquant le temps restant avant la capture ; pas de %
@@ -1364,9 +1389,9 @@ class Tracker:
                     remaining_s = max(0, int(snapshot_ts - now))
                     m, s = divmod(remaining_s, 60)
                     remaining_str = f"{m}:{s:02d}"
-                    snap_msg = f"📸 Snapshot T1 (30s avant le depart) — dans {remaining_str}"
+                    snap_msg = f"📸 Snapshot T1 (2min30 avant le depart) — dans {remaining_str}"
                 else:
-                    snap_msg = "📸 Snapshot T1 (30s avant le depart) — en attente de l'heure de depart…"
+                    snap_msg = "📸 Snapshot T1 (2min30 avant le depart) — en attente de l'heure de depart…"
                 set_state(
                     rows=rows,
                     snapLine=snap_msg,
@@ -1422,22 +1447,25 @@ class Tracker:
                 pct_chute = (cote_t1 - cote_live) / cote_t1 * 100
             ecarts[num] = (cote_t1, cote_live, pct_chute)
 
-        # VALUEBET (signal unique par course) : parmi les chevaux dont la
-        # cote live est DANS [COTE_RANGE_MIN, COTE_RANGE_MAX] et dont le %
-        # de chute atteint VALUEBET_CHUTE_THRESHOLD_PCT, on ne retient QUE
-        # celui qui a la plus grosse chute -- pas plusieurs signaux
-        # simultanes possibles. Recalcule a chaque poll (pas de "collage" :
-        # si un autre cheval prend la tete, le signal se deplace).
-        valuebet_winner_num = None
-        valuebet_winner_pct = None
-        for num, (ct1, clive, pc) in ecarts.items():
-            if pc is None or pc < VALUEBET_CHUTE_THRESHOLD_PCT:
-                continue
-            if clive is None or clive < COTE_RANGE_MIN or clive > COTE_RANGE_MAX:
-                continue
-            if valuebet_winner_pct is None or pc > valuebet_winner_pct:
-                valuebet_winner_pct = pc
-                valuebet_winner_num = num
+        # VALUEBET : evaluation UNIQUE (pas un recalcul a chaque poll), au
+        # moment T+VALUEBET_EVAL_AFTER_DEPART_S (30s apres le depart
+        # programme). A cet instant precis, TOUS les chevaux dont la cote
+        # live est DANS [COTE_RANGE_MIN, COTE_RANGE_MAX] et dont le % de
+        # chute atteint VALUEBET_CHUTE_THRESHOLD_PCT (5%) sont marques
+        # valuebet -- plusieurs signaux simultanes possibles. Une fois cette
+        # evaluation faite, self.valuebet_seen est FIGE pour le reste de la
+        # course (jamais retire, jamais recalcule), meme si la cote de ces
+        # chevaux ressort ensuite de la plage [1,10].
+        if self.snapshot_taken and not self.valuebet_eval_done and self.depart_ts is not None:
+            eval_ts = self.depart_ts + VALUEBET_EVAL_AFTER_DEPART_S
+            if now >= eval_ts:
+                for num, (ct1, clive, pc) in ecarts.items():
+                    if pc is None or pc < VALUEBET_CHUTE_THRESHOLD_PCT:
+                        continue
+                    if clive is None or clive < COTE_RANGE_MIN or clive > COTE_RANGE_MAX:
+                        continue
+                    self.valuebet_seen[num] = {"pctChute": pc, "at": now}
+                self.valuebet_eval_done = True
 
         def sort_key(n):
             pc = ecarts[n][2]
@@ -1482,36 +1510,28 @@ class Tracker:
             bigmove = self.bigmove_seen.get(num)
             is_bigmove = bigmove is not None
 
-            # remonte = la cote du cheval "remonte" depuis T0 (% de chute
-            # negatif, il devient moins favori) -> TOUJOURS masque, meme s'il
-            # est par ailleurs marque bigmove/valuebet (priorite absolue)
+            # remonte = la cote du cheval "remonte" depuis T1 (% de chute
+            # negatif, il devient moins favori) -> masque, SAUF si deja
+            # marque valuebet (marquage fige a T+30s, cf. plus haut : on le
+            # laisse visible quoi qu'il arrive a sa cote ensuite).
             is_remonte = pct_chute is not None and pct_chute < 0
 
-            # VALUEBET : desormais un SEUL signal possible par course -- le
-            # cheval retenu est celui calcule plus haut (valuebet_winner_num),
-            # la plus grosse chute (>= VALUEBET_CHUTE_THRESHOLD_PCT) parmi les
-            # chevaux dans la plage de cote visible [COTE_RANGE_MIN,
-            # COTE_RANGE_MAX]. Tout autre cheval perd son marquage valuebet
-            # immediatement (self.valuebet_seen ne contient jamais plus d'une
-            # entree). Le "at" (heure de premier marquage) est preserve tant
-            # que c'est le MEME cheval qui reste le gagnant d'un poll a
-            # l'autre ; il est reinitialise si le gagnant change.
-            if num == valuebet_winner_num:
-                prev_vb = self.valuebet_seen.get(num)
-                if prev_vb is None:
-                    self.valuebet_seen[num] = {"pctChute": pct_chute, "at": now}
-                else:
-                    prev_vb["pctChute"] = pct_chute
-            else:
-                self.valuebet_seen.pop(num, None)
+            # VALUEBET : marquage FIGE, decide une seule fois a T+30s (cf.
+            # plus haut, avant cette boucle) -- on lit juste ici, on
+            # n'ecrit plus rien dans self.valuebet_seen poll apres poll.
             is_valuebet = num in self.valuebet_seen
 
             # hors-plage = cote Gagnant en DIRECT en dehors de [COTE_RANGE_MIN,
-            # COTE_RANGE_MAX] -> masque, meme si marque bigmove/valuebet.
-            # Reevalue a chaque poll sur la cote LIVE (pas T0) : un cheval qui
-            # entre dans la plage apparait immediatement, un cheval qui en
-            # sort disparait immediatement.
-            is_out_of_range = cote_live is None or cote_live < COTE_RANGE_MIN or cote_live > COTE_RANGE_MAX
+            # COTE_RANGE_MAX] -> masque. Reevalue a chaque poll sur la cote
+            # LIVE (pas T1) : un cheval qui entre dans la plage apparait
+            # immediatement, un cheval qui en sort disparait immediatement --
+            # SAUF si marque valuebet : celui-la reste visible meme si sa
+            # cote ressort ensuite de [1,10] (demande explicite).
+            is_out_of_range = (not is_valuebet) and (
+                cote_live is None or cote_live < COTE_RANGE_MIN or cote_live > COTE_RANGE_MAX
+            )
+            if is_valuebet:
+                is_remonte = False  # meme logique : reste visible quoi qu'il arrive
 
             rows.append({
                 "num": num,
@@ -1552,7 +1572,10 @@ class Tracker:
         try:
             data = http_get_json(PMU_CIT_HOST, path)
             self.handle_odds(data)
+            HEALTH["tracker_last_ok_ts"] = time.time()
+            HEALTH["tracker_last_error"] = None
         except Exception as e:
+            HEALTH["tracker_last_error"] = repr(e)
             set_state(statusLine=f"Erreur cotes : {e}")
 
     # -- boucle principale -------------------------------------------------
@@ -1608,6 +1631,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_odds_timeseries_reset()
         elif self.path.startswith("/api/backup.zip"):
             self.handle_backup()
+        elif self.path.startswith("/api/health"):
+            self.handle_health()
         elif self.path == "/":
             self.path = "/pmu_bot.html"
             super().do_GET()
@@ -1620,6 +1645,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
+
+    def handle_health(self):
+        """Diagnostic en direct : depuis combien de temps chaque mecanisme
+        (Tracker principal, LookaheadOddsLogger) a-t-il reussi un poll pour
+        la derniere fois ? Permet de detecter une panne SILENCIEUSE (le
+        processus tourne mais ne collecte plus rien) sans attendre de
+        constater le trou le lendemain dans le CSV -- rafraichis cette page
+        de temps en temps ; si "secondesDepuisDernierSucces" grimpe sans
+        jamais redescendre alors qu'il y a des courses en cours, il y a un
+        probleme."""
+        now = time.time()
+        tracker_ts = HEALTH.get("tracker_last_ok_ts")
+        lookahead_ts = HEALTH.get("lookahead_last_ok_ts")
+        payload = {
+            "trackerPrincipal": {
+                "derniersSuccesIl_y_a_s": (round(now - tracker_ts, 1) if tracker_ts else None),
+                "derniereErreur": HEALTH.get("tracker_last_error"),
+            },
+            "lookaheadOddsLogger": {
+                "derniersSuccesIl_y_a_s": (round(now - lookahead_ts, 1) if lookahead_ts else None),
+                "derniereErreur": HEALTH.get("lookahead_last_error"),
+                "coursesSuiviesEnAvanceActuellement": HEALTH.get("lookahead_active_courses", 0),
+            },
+        }
+        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def handle_backup(self):
         """Sauvegarde complete des donnees brutes (les 2 fichiers .jsonl,
