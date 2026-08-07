@@ -235,10 +235,12 @@
   .row.flash-up{ background:var(--success-bg); }
   .row.flash-down{ background:var(--danger-bg); }
 
-  /* Un seul signal visuel fort, déclenché dès qu'un cheval a chuté de 5%
-     ou plus (% Chute, écart T1 -> Live), évalué UNE FOIS à T+30s après le
-     départ, marquage définitif pour la course (reste visible même si la
-     cote ressort de la plage 1-10 ensuite). */
+  /* Un seul signal visuel fort par course : le cheval ayant subi la PLUS
+     GROSSE chute de cote (% Chute, écart T1 -> Live), évalué UNE FOIS à
+     T+30s après le départ, marquage définitif (reste visible ensuite quoi
+     qu'il arrive à sa cote). Le snapshot T1 et la restriction de plage de
+     cote dépendent du type de course (Trot : 5 min avant / plage 1-10 ;
+     Plat-Obstacle : 30s avant / aucune restriction) — cf. server.py. */
   .row.row-valuebet{
     border:2px solid var(--tote-fg);
     background:linear-gradient(0deg, rgba(232,178,77,.12), rgba(232,178,77,.12)), var(--surface);
@@ -507,7 +509,7 @@ function renderTable(rows){
     }
     if(pctChute !== undefined) lastGagnant[num] = pctChute;
     coteEl.title = pctChute !== undefined
-      ? "% de chute entre la cote au moment du snapshot (T1, 2min30 avant le départ) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le snapshot"
+      ? "% de chute entre la cote au moment du snapshot (T1) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le snapshot"
       : "Cote Gagnant en direct — classement du plus au moins favori, snapshot T1 pas encore pris";
 
     // Cote T1 : valeur de référence figée, affichage neutre (ne "flashe" pas)
@@ -515,7 +517,7 @@ function renderTable(rows){
     if(deltaEl.textContent !== coteT0Str) deltaEl.textContent = coteT0Str;
     deltaEl.classList.remove('up','down','flat');
     deltaEl.classList.add('flat');
-    deltaEl.title = "Cote Gagnant au moment du snapshot (T1, 1min avant le départ)";
+    deltaEl.title = "Cote Gagnant au moment du snapshot T1 (délai avant départ dépendant du type de course : 5 min en Trot, 30s en Plat/Obstacle)";
 
     const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
     const isFast = !!r.isFast;
@@ -532,18 +534,18 @@ function renderTable(rows){
         : "Cote Gagnant en live (probabilité implicite actuelle)";
     }
 
-    // Signal "VALUEBET" : marquage DÉFINITIF calculé côté serveur (comme le
-    // 🔥 bigmove). Dès que 🔥 gros écart ET ⚡ mouvement rapide ont été vrais
-    // EN MÊME TEMPS au moins une fois sur la course, le cheval reste marqué
-    // "valuebet" pour le reste de la course — le bandeau ne disparaît plus
-    // quand la vitesse retombe ensuite sous le seuil. Le cheval reste aussi
-    // visible dans le tableau (masquage par rang ignoré côté serveur pour
-    // les chevaux bigmove/valuebet).
+    // Signal "VALUEBET" : marquage DÉFINITIF calculé côté serveur, UN SEUL
+    // cheval par course — celui qui a subi la plus grosse chute de cote
+    // (% Chute, T1 -> Live) au moment de l'évaluation (T+30s après le
+    // départ). Une fois marqué, le cheval reste "valuebet" pour le reste de
+    // la course (bandeau ne disparaît plus), et reste visible dans le
+    // tableau (masquage par rang / hors-plage ignoré côté serveur pour ce
+    // cheval).
     const isBigMove = !!r.isBigMove;
     const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
-      valuebetEl.title = `Chute de ${pctChuteStr} depuis le snapshot T1 (seuil : 5%, évalué une fois à T+30s après le départ, figé ensuite)`;
+      valuebetEl.title = `Plus grosse chute de cote de la course : ${pctChuteStr} depuis le snapshot T1 (évalué une fois à T+30s après le départ, figé ensuite)`;
     }
     row.classList.toggle('row-valuebet', isValuebet);
 
