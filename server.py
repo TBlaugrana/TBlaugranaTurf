@@ -114,19 +114,19 @@ VALUEBET_EVAL_AFTER_DEPART_S = 30  # evaluation UNIQUE du signal valuebet, 30s A
 
 # ---------------------------------------------------------------------------
 # Parametres dependants du TYPE DE COURSE (discipline PMU) :
-#   - Trot (Attele / Monte) : snapshot T1 pris 5 MIN avant le depart, et la
-#     plage de cote live [COTE_RANGE_MIN, COTE_RANGE_MAX] (1 a 10) reste
-#     appliquee (chevaux hors plage masques).
-#   - Plat / Obstacle (Haie, Steeple-chase, Cross...) : snapshot T1 pris
-#     seulement 30s avant le depart, et AUCUNE restriction de plage de cote
-#     (tous les partants restent candidats a l'affichage).
-# Dans les deux cas, le signal valuebet reste : un seul cheval par course
-# (celui avec la plus grosse chute de cote a l'evaluation).
+#   - Trot (Attele / Monte) ET Plat/Obstacle (Haie, Steeple-chase, Cross...) :
+#     memes reglages pour toutes les disciplines desormais -> snapshot T1
+#     pris 30s avant le depart, et la plage de cote live
+#     [COTE_RANGE_MIN, COTE_RANGE_MAX] (1 a 10) appliquee partout (chevaux
+#     hors plage masques en live).
+# Dans tous les cas, le signal valuebet reste : un seul cheval par course
+# (celui avec la plus grosse chute de cote entre le snapshot T0 (T-30s) et
+# l'evaluation a T+VALUEBET_EVAL_AFTER_DEPART_S, cf. plus haut).
 # ---------------------------------------------------------------------------
-TROT_SNAPSHOT_BEFORE_DEPART_S = 5 * 60   # 5 minutes avant le depart (Trot Attele/Monte)
+TROT_SNAPSHOT_BEFORE_DEPART_S = 30       # 30 secondes avant le depart (Trot Attele/Monte)
 GALOP_SNAPSHOT_BEFORE_DEPART_S = 30      # 30 secondes avant le depart (Plat/Obstacle)
 TROT_COTE_RANGE_ENABLED = True           # Trot : on masque les chevaux hors [COTE_RANGE_MIN, COTE_RANGE_MAX]
-GALOP_COTE_RANGE_ENABLED = False         # Plat/Obstacle : aucune restriction de cote
+GALOP_COTE_RANGE_ENABLED = True          # Plat/Obstacle : meme restriction desormais
 
 
 def is_trot_discipline(discipline):
@@ -1409,8 +1409,8 @@ class Tracker:
         # -- capture (retardee) du snapshot T1 ---------------------------
         # Le snapshot T1 n'est plus fige des le tout premier poll, mais
         # seulement a self.snapshot_lead_s AVANT l'heure de depart programmee
-        # -- 5 min avant pour le Trot (Attele/Monte), 30s avant pour le
-        # Plat/Obstacle (cf. select_next_course). Avant ce moment, on
+        # -- 30s avant, pour toutes les disciplines (Trot comme
+        # Plat/Obstacle, cf. select_next_course). Avant ce moment, on
         # affiche un mode "warm-up" : tous les chevaux, tries du plus au
         # moins favori, avec un message d'attente indiquant le temps
         # restant avant la capture ; pas de % de chute, pas de masquage,
@@ -1493,9 +1493,9 @@ class Tracker:
         # programme). A cet instant precis, on ne marque plus tous les
         # chevaux au-dela d'un seuil -- on choisit UN SEUL cheval : celui
         # qui a subi la plus grosse chute de cote (pctChute, T0 -> Live)
-        # parmi les chevaux eligibles (en Trot, seulement ceux dont la cote
-        # live est dans [COTE_RANGE_MIN, COTE_RANGE_MAX] ; en Plat/Obstacle,
-        # tous les partants sont eligibles). Il faut que la cote ait
+        # parmi les chevaux eligibles (seulement ceux dont la cote live est
+        # dans [COTE_RANGE_MIN, COTE_RANGE_MAX], pour toutes les
+        # disciplines). Il faut que la cote ait
         # effectivement chute (pctChute > 0) pour qu'un signal soit emis --
         # sinon aucun valuebet n'est marque pour cette course. Une fois cette
         # evaluation faite, self.valuebet_seen est FIGE pour le reste de la
@@ -1570,9 +1570,8 @@ class Tracker:
             is_valuebet = num in self.valuebet_seen
 
             # hors-plage = cote Gagnant en DIRECT en dehors de [COTE_RANGE_MIN,
-            # COTE_RANGE_MAX] -> masque. Applique UNIQUEMENT en Trot (cf.
-            # self.cote_range_enabled) ; en Plat/Obstacle, aucune restriction,
-            # tous les partants restent candidats a l'affichage. Reevalue a
+            # COTE_RANGE_MAX] -> masque. Applique pour toutes les disciplines
+            # (cf. self.cote_range_enabled). Reevalue a
             # chaque poll sur la cote LIVE (pas T1) : un cheval qui entre
             # dans la plage apparait immediatement, un cheval qui en sort
             # disparait immediatement -- SAUF si marque valuebet : celui-la
