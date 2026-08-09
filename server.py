@@ -105,28 +105,38 @@ BIGMOVE_THRESHOLD_PCT = 15.0
 BIGMOVE_ALERT_LEAD_S = 60        # les alertes ne se declenchent que dans la derniere minute avant le
                                   # depart (avant, les mouvements sont frequents mais les enjeux sont faibles)
 
-# Signal VALUEBET : a l'evaluation (T+VALUEBET_EVAL_AFTER_DEPART_S), on ne
+# Signal VALUEBET : a l'evaluation (T+<eval>, cf. TROT_VALUEBET_EVAL_AFTER_DEPART_S
+# / GALOP_VALUEBET_EVAL_AFTER_DEPART_S plus bas, selon la discipline), on ne
 # marque plus TOUS les chevaux qui franchissent un seuil de chute -- on ne
 # marque QUE le cheval qui a subi la plus grosse chute de cote (T0 -> Live)
 # parmi les chevaux eligibles (cf. evaluation dans handle_odds). Un seul
 # signal valuebet par course, jamais plusieurs simultanes.
-VALUEBET_EVAL_AFTER_DEPART_S = 30  # evaluation UNIQUE du signal valuebet, 30s APRES le depart programme (pas un recalcul continu)
 
 # ---------------------------------------------------------------------------
-# Parametres dependants du TYPE DE COURSE (discipline PMU) :
-#   - Trot (Attele / Monte) ET Plat/Obstacle (Haie, Steeple-chase, Cross...) :
-#     memes reglages pour toutes les disciplines desormais -> snapshot T1
-#     pris 30s avant le depart, et la plage de cote live
-#     [COTE_RANGE_MIN, COTE_RANGE_MAX] (1 a 10) appliquee partout (chevaux
-#     hors plage masques en live).
-# Dans tous les cas, le signal valuebet reste : un seul cheval par course
-# (celui avec la plus grosse chute de cote entre le snapshot T0 (T-30s) et
-# l'evaluation a T+VALUEBET_EVAL_AFTER_DEPART_S, cf. plus haut).
+# Parametres dependants du TYPE DE COURSE (discipline PMU) : la methode de
+# detection du signal valuebet differe desormais entre le Trot (Attele /
+# Monte) et le "Galop" (Plat, Obstacle, Haie, Steeple-chase, Cross...) :
+#
+#   - GALOP (Plat / Obstacle / Haie / Steeple-chase) : snapshot T0 pris
+#     GALOP_SNAPSHOT_BEFORE_DEPART_S avant le depart (30s avant), evaluation
+#     du valuebet a GALOP_VALUEBET_EVAL_AFTER_DEPART_S apres le depart
+#     programme (2 min) -> on regarde qui a le plus chute entre T-30s et
+#     T+2min. Aucune restriction de plage de cote (GALOP_COTE_RANGE_ENABLED
+#     = False) : tous les partants sont eligibles, quelle que soit leur cote.
+#
+#   - TROT (Attele / Monte) : snapshot T0 pris exactement au depart officiel
+#     (TROT_SNAPSHOT_BEFORE_DEPART_S = 0), evaluation du valuebet
+#     TROT_VALUEBET_EVAL_AFTER_DEPART_S apres ce depart (30s) -> on regarde
+#     qui a le plus chute entre T0 et T+30s. Seuls les chevaux dont la cote
+#     LIVE reste dans [COTE_RANGE_MIN, COTE_RANGE_MAX] (1 a 10) sont
+#     eligibles et affiches (TROT_COTE_RANGE_ENABLED = True).
 # ---------------------------------------------------------------------------
-TROT_SNAPSHOT_BEFORE_DEPART_S = 30       # 30 secondes avant le depart (Trot Attele/Monte)
-GALOP_SNAPSHOT_BEFORE_DEPART_S = 30      # 30 secondes avant le depart (Plat/Obstacle)
+TROT_SNAPSHOT_BEFORE_DEPART_S = 0        # T0 = au depart officiel (Trot Attele/Monte), pas avant
+GALOP_SNAPSHOT_BEFORE_DEPART_S = 30      # 30 secondes avant le depart (Plat/Obstacle/Haie/Steeple-chase)
 TROT_COTE_RANGE_ENABLED = True           # Trot : on masque les chevaux hors [COTE_RANGE_MIN, COTE_RANGE_MAX]
-GALOP_COTE_RANGE_ENABLED = True          # Plat/Obstacle : meme restriction desormais
+GALOP_COTE_RANGE_ENABLED = False         # Galop : aucune restriction de plage de cote
+TROT_VALUEBET_EVAL_AFTER_DEPART_S = 30   # Trot : evaluation valuebet a T0+30s (T0 = depart)
+GALOP_VALUEBET_EVAL_AFTER_DEPART_S = 120 # Galop : evaluation valuebet a T+2min apres le depart programme
 
 
 def is_trot_discipline(discipline):
@@ -889,6 +899,7 @@ class Tracker:
         # fonction de la discipline : Trot (Attele/Monte) vs Plat/Obstacle.
         self.snapshot_lead_s = GALOP_SNAPSHOT_BEFORE_DEPART_S
         self.cote_range_enabled = GALOP_COTE_RANGE_ENABLED
+        self.valuebet_eval_after_s = GALOP_VALUEBET_EVAL_AFTER_DEPART_S
 
         self.favoris_order = []   # ordre de suivi des chevaux (num en string)
         self.horse_names = {}
@@ -899,7 +910,7 @@ class Tracker:
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
         self.valuebet_seen = {}   # num -> {"pctChute": ..., "at": ...} -- rempli UNE SEULE FOIS, a l'evaluation T+30s (voir valuebet_eval_done), puis fige pour le reste de la course
-        self.valuebet_eval_done = False  # True des que l'evaluation unique du signal valuebet (a VALUEBET_EVAL_AFTER_DEPART_S) a eu lieu pour cette course
+        self.valuebet_eval_done = False  # True des que l'evaluation unique du signal valuebet (a self.valuebet_eval_after_s, selon la discipline) a eu lieu pour cette course
         self.tracking_started_at = None  # timestamp du debut du suivi de la course en cours (informatif)
         self.snapshot_taken = False      # True des que le snapshot T0 a ete capture (bascule mode warm-up -> mode normal)
         self.last_reprog = 0.0
@@ -966,6 +977,7 @@ class Tracker:
         trot = is_trot_discipline(self.selected_discipline)
         self.snapshot_lead_s = TROT_SNAPSHOT_BEFORE_DEPART_S if trot else GALOP_SNAPSHOT_BEFORE_DEPART_S
         self.cote_range_enabled = TROT_COTE_RANGE_ENABLED if trot else GALOP_COTE_RANGE_ENABLED
+        self.valuebet_eval_after_s = TROT_VALUEBET_EVAL_AFTER_DEPART_S if trot else GALOP_VALUEBET_EVAL_AFTER_DEPART_S
         self.favoris_order = snap.get("favoris_order") or []
         self.horse_names = snap.get("horse_names") or {}
         self.cote_t1 = snap.get("cote_t1") or {}
@@ -1196,6 +1208,7 @@ class Tracker:
         trot = is_trot_discipline(self.selected_discipline)
         self.snapshot_lead_s = TROT_SNAPSHOT_BEFORE_DEPART_S if trot else GALOP_SNAPSHOT_BEFORE_DEPART_S
         self.cote_range_enabled = TROT_COTE_RANGE_ENABLED if trot else GALOP_COTE_RANGE_ENABLED
+        self.valuebet_eval_after_s = TROT_VALUEBET_EVAL_AFTER_DEPART_S if trot else GALOP_VALUEBET_EVAL_AFTER_DEPART_S
         set_state(courseInfo=self.format_course_label(chosen), departTs=self.depart_ts)
         self.start_tracking()
         self.maybe_save_snapshot(force=True)
@@ -1212,8 +1225,7 @@ class Tracker:
         self.valuebet_eval_done = False
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
-        lead_label = "5 min" if self.snapshot_lead_s >= 60 else f"{int(self.snapshot_lead_s)}s"
-        set_state(rows=[], snapLine=f"📸 Snapshot T1 ({lead_label} avant le depart) — en attente…")
+        set_state(rows=[], snapLine=f"📸 Snapshot T1 ({self.snapshot_phrase()}) — en attente…")
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -1245,6 +1257,7 @@ class Tracker:
             trot = is_trot_discipline(self.selected_discipline)
             self.snapshot_lead_s = TROT_SNAPSHOT_BEFORE_DEPART_S if trot else GALOP_SNAPSHOT_BEFORE_DEPART_S
             self.cote_range_enabled = TROT_COTE_RANGE_ENABLED if trot else GALOP_COTE_RANGE_ENABLED
+            self.valuebet_eval_after_s = TROT_VALUEBET_EVAL_AFTER_DEPART_S if trot else GALOP_VALUEBET_EVAL_AFTER_DEPART_S
             if self.depart_ts is not None and abs(new_depart_ts - self.depart_ts) > DEPART_CHANGE_THRESHOLD_S:
                 was_delayed = new_depart_ts > self.depart_ts
                 self.depart_ts = new_depart_ts
@@ -1353,6 +1366,15 @@ class Tracker:
                     speed[num] = (math.exp(-log_rate) - 1) * 100  # en %/min
         return speed
 
+    def snapshot_phrase(self):
+        """Libelle humain du moment de capture du snapshot T1, en fonction de
+        self.snapshot_lead_s : "avant le depart" (Galop, lead_s > 0) ou
+        "au depart (T0)" (Trot, lead_s == 0)."""
+        if self.snapshot_lead_s <= 0:
+            return "au depart (T0)"
+        lead_label = "5 min" if self.snapshot_lead_s >= 60 else f"{int(self.snapshot_lead_s)}s"
+        return f"{lead_label} avant le depart"
+
     def build_tote_label(self, nb_live=None):
         parts = []
         if self.selected_discipline:
@@ -1416,7 +1438,6 @@ class Tracker:
         # restant avant la capture ; pas de % de chute, pas de masquage,
         # pas de badge (rien de tout ca n'a de sens tant que la reference
         # T1 n'existe pas).
-        lead_label = "5 min" if self.snapshot_lead_s >= 60 else f"{int(self.snapshot_lead_s)}s"
         if not self.snapshot_taken:
             snapshot_ts = (self.depart_ts - self.snapshot_lead_s) if self.depart_ts is not None else None
             snapshot_reached = snapshot_ts is not None and now >= snapshot_ts
@@ -1430,9 +1451,9 @@ class Tracker:
                     remaining_s = max(0, int(snapshot_ts - now))
                     m, s = divmod(remaining_s, 60)
                     remaining_str = f"{m}:{s:02d}"
-                    snap_msg = f"📸 Snapshot T1 ({lead_label} avant le depart) — dans {remaining_str}"
+                    snap_msg = f"📸 Snapshot T1 ({self.snapshot_phrase()}) — dans {remaining_str}"
                 else:
-                    snap_msg = f"📸 Snapshot T1 ({lead_label} avant le depart) — en attente de l'heure de depart…"
+                    snap_msg = f"📸 Snapshot T1 ({self.snapshot_phrase()}) — en attente de l'heure de depart…"
                 set_state(
                     rows=rows,
                     snapLine=snap_msg,
@@ -1489,19 +1510,22 @@ class Tracker:
             ecarts[num] = (cote_t1, cote_live, pct_chute)
 
         # VALUEBET : evaluation UNIQUE (pas un recalcul a chaque poll), au
-        # moment T+VALUEBET_EVAL_AFTER_DEPART_S (30s apres le depart
-        # programme). A cet instant precis, on ne marque plus tous les
-        # chevaux au-dela d'un seuil -- on choisit UN SEUL cheval : celui
-        # qui a subi la plus grosse chute de cote (pctChute, T0 -> Live)
-        # parmi les chevaux eligibles (seulement ceux dont la cote live est
-        # dans [COTE_RANGE_MIN, COTE_RANGE_MAX], pour toutes les
-        # disciplines). Il faut que la cote ait
+        # moment T+self.valuebet_eval_after_s apres le depart programme --
+        # delai qui depend de la discipline (cf. TROT_VALUEBET_EVAL_AFTER_DEPART_S
+        # = 30s pour le Trot / GALOP_VALUEBET_EVAL_AFTER_DEPART_S = 120s pour
+        # le Galop, fixes lors de la selection de la course). A cet instant
+        # precis, on ne marque plus tous les chevaux au-dela d'un seuil -- on
+        # choisit UN SEUL cheval : celui qui a subi la plus grosse chute de
+        # cote (pctChute, T0 -> Live) parmi les chevaux eligibles (seulement
+        # ceux dont la cote live est dans [COTE_RANGE_MIN, COTE_RANGE_MAX]
+        # quand self.cote_range_enabled est actif -- Trot uniquement ; en
+        # Galop, tous les partants sont eligibles). Il faut que la cote ait
         # effectivement chute (pctChute > 0) pour qu'un signal soit emis --
         # sinon aucun valuebet n'est marque pour cette course. Une fois cette
         # evaluation faite, self.valuebet_seen est FIGE pour le reste de la
         # course (jamais retire, jamais recalcule).
         if self.snapshot_taken and not self.valuebet_eval_done and self.depart_ts is not None:
-            eval_ts = self.depart_ts + VALUEBET_EVAL_AFTER_DEPART_S
+            eval_ts = self.depart_ts + self.valuebet_eval_after_s
             if now >= eval_ts:
                 best_num, best_pc = None, None
                 for num, (ct1, clive, pc) in ecarts.items():
