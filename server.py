@@ -415,7 +415,7 @@ def build_odds_timeseries_csv():
     writer.writerow(
         ["date", "label", "discipline", "heureDepart", "num", "nom"]
         + [col_names[m] for m in minute_offsets]
-        + ["rapportSimpleGagnant", "rapportSimplePlace"]
+        + ["rapportSimpleGagnant", "rapportSimplePlace", "rapportsRawJson"]
     )
     try:
         with open(ODDS_TIMESERIES_LOG_FILE, "r", encoding="utf-8") as f:
@@ -427,6 +427,8 @@ def build_odds_timeseries_csv():
                     entry = json.loads(line)
                 except Exception:
                     continue
+                rapports = entry.get("rapports")
+                rapports_raw = json.dumps(rapports, ensure_ascii=False) if rapports is not None else ""
                 depart_iso = entry.get("heureDepart")
                 depart_ts = None
                 if depart_iso:
@@ -467,6 +469,7 @@ def build_odds_timeseries_csv():
                         + [
                             h.get("rapportSimpleGagnant", ""),
                             h.get("rapportSimplePlace", ""),
+                            rapports_raw,
                         ]
                     )
     except FileNotFoundError:
@@ -716,6 +719,16 @@ def log_odds_timeseries_async(date_str, reunion, course, label,
             "windowBeforeS": ODDS_TIMESERIES_WINDOW_BEFORE_S,
             "windowAfterS": ODDS_TIMESERIES_WINDOW_AFTER_S,
             "horses": horses,
+            # BUG CORRIGE : contrairement au journal valuebet (qui garde
+            # toujours les rapports PMU bruts en secours), ce journal ne
+            # conservait QUE le resultat de extract_dividende -- si
+            # l'extraction echouait (rapports jamais publies par PMU,
+            # enquete des commissaires, format de reponse imprevu...), le
+            # rapportSimpleGagnant/rapportSimplePlace restait vide POUR
+            # TOUJOURS, sans aucun moyen de retrouver l'info a la main.
+            # On garde desormais le JSON brut (ou null si jamais obtenu),
+            # expose en secours dans le CSV (colonne rapportsRawJson).
+            "rapports": rapports,
         }
         try:
             with ODDS_TIMESERIES_LOG_LOCK:
@@ -792,23 +805,6 @@ class LookaheadOddsLogger:
         self.active = {}
         self.flushed_keys = set()        # eviter de logguer deux fois la meme course
 
-    def candidates_in_window(self):
-        """Toutes les courses de tracker.all_courses actuellement dans la
-        fenetre [depart-5min, depart+5min] et pas encore flushees."""
-        now = time.time()
-        out = []
-        for c in self.tracker.all_courses:
-            depart_ms = c.get("depart")
-            if not depart_ms:
-                continue
-            key = (c["numReunion"], c["course"])
-            if key in self.flushed_keys:
-                continue
-            depart_s = depart_ms / 1000.0
-            if (depart_s - ODDS_TIMESERIES_WINDOW_BEFORE_S) <= now <= (depart_s + ODDS_TIMESERIES_WINDOW_AFTER_S):
-                out.append(c)
-        return out
-
     def flush(self, key):
         state = self.active.pop(key, None)
         if state is None:
@@ -823,27 +819,83 @@ class LookaheadOddsLogger:
         self.flushed_keys.add(key)
 
     def poll_once(self):
-        candidates = self.candidates_in_window()
-        candidate_keys = {(c["numReunion"], c["course"]) for c in candidates}
+        # BUG CORRIGE : l'ancienne version decidait "flush" uniquement sur la
+        # base de la fenetre [depart-5min, depart+5min] recalculee a CHAQUE
+        # tour avec l'heure de depart la PLUS RECENTE connue. Or l'heure de
+        # depart programmee bouge tres frequemment en cours de journee
+        # (retard/avance publie par PMU) : des qu'une course deja suivie
+        # voyait son "depart" repousse dans le programme rafraichi (toutes
+        # les REPROG_INTERVAL_S=45s), la fenetre se decalait en avant et
+        # "now" se retrouvait hors fenetre -> la course etait consideree
+        # comme "terminee" et FLUSHEE IMMEDIATEMENT avec les 1-2 points a
+        # peine accumules, puis marquee definitivement dans flushed_keys
+        # (plus jamais reprise, meme quand "now" rentre a nouveau dans la
+        # nouvelle fenetre). C'est exactement le symptome observe : une
+        # course avec seulement les toutes premieres colonnes (CoteT-5,
+        # CoteT-4min30) remplies puis plus rien.
+        #
+        # Desormais : une course active n'est flushee QUE quand on est
+        # reellement passe sa fenetre en tenant compte de la DERNIERE heure
+        # de depart connue (mise a jour a chaque tour), ou quand elle a
+        # disparu du programme (annulee, jour suivant...). Si la fenetre se
+        # decale en avant, la course reste active (buffer conserve) et on
+        # met simplement le sampling en pause jusqu'a ce que "now" soit de
+        # nouveau dans la fenetre -- aucune donnee deja accumulee n'est
+        # perdue.
+        now = time.time()
+        all_by_key = {
+            (c["numReunion"], c["course"]): c
+            for c in self.tracker.all_courses
+            if c.get("depart")
+        }
 
-        # 1) les courses actives dont la fenetre est terminee -> flush
-        for key in list(self.active.keys()):
-            if key not in candidate_keys:
+        # 1) creation des nouvelles courses qui entrent dans la fenetre, et
+        # mise a jour de l'heure de depart (course_info) des courses deja
+        # actives -- sans jamais reinitialiser leur buffer deja accumule.
+        for key, c in all_by_key.items():
+            if key in self.flushed_keys:
+                continue
+            depart_s = c["depart"] / 1000.0
+            in_window = (depart_s - ODDS_TIMESERIES_WINDOW_BEFORE_S) <= now <= (depart_s + ODDS_TIMESERIES_WINDOW_AFTER_S)
+            if key not in self.active:
+                if in_window:
+                    self.active[key] = {
+                        "buffer": defaultdict(list),
+                        "horse_names": {},
+                        "last_sample_ts": 0.0,
+                        "course_info": c,
+                    }
+            else:
+                self.active[key]["course_info"] = c
+
+        # 2) flush des courses dont la fenetre est VRAIMENT terminee, sur la
+        # base de la derniere heure de depart connue (pas celle d'origine).
+        for key, state in list(self.active.items()):
+            depart_ms = (state["course_info"] or {}).get("depart")
+            if not depart_ms:
+                continue
+            depart_s = depart_ms / 1000.0
+            if now > depart_s + ODDS_TIMESERIES_WINDOW_AFTER_S:
                 self.flush(key)
 
-        # 2) les nouvelles courses qui entrent dans la fenetre -> demarrage
-        for c in candidates:
-            key = (c["numReunion"], c["course"])
-            if key not in self.active:
-                self.active[key] = {
-                    "buffer": defaultdict(list),
-                    "horse_names": {},
-                    "last_sample_ts": 0.0,
-                    "course_info": c,
-                }
+        # 3) flush (best-effort) des courses actives ayant disparu du
+        # programme (annulee apres coup, changement de jour PMU...) plutot
+        # que de les garder actives indefiniment sans plus jamais recevoir
+        # de mise a jour de course_info.
+        for key in list(self.active.keys()):
+            if key not in all_by_key:
+                self.flush(key)
 
-        # 3) poll independant de CHAQUE course actuellement suivie en avance
+        # 4) poll independant de chaque course active ET actuellement dans
+        # sa fenetre (une course dont le depart a ete repousse plus loin
+        # reste active mais n'est pas interrogee tant qu'elle n'est pas
+        # revenue dans la fenetre, pour ne pas gaspiller d'appels PMU).
         for key, state in list(self.active.items()):
+            depart_ms = (state["course_info"] or {}).get("depart")
+            if depart_ms:
+                depart_s = depart_ms / 1000.0
+                if not (depart_s - ODDS_TIMESERIES_WINDOW_BEFORE_S) <= now <= (depart_s + ODDS_TIMESERIES_WINDOW_AFTER_S):
+                    continue
             self._poll_one(key, state)
 
     def _poll_one(self, key, state):
