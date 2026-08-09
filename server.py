@@ -140,11 +140,18 @@ GALOP_VALUEBET_EVAL_AFTER_DEPART_S = 120 # Galop : evaluation valuebet a T+2min 
 
 
 def is_trot_discipline(discipline):
-    """True si la discipline (telle que fournie par l'API PMU, ex: "TROT",
-    "TROT_ATTELE", "TROT_MONTE") correspond a du Trot (Attele ou Monte).
-    Toute autre discipline (PLAT, OBSTACLE, HAIE, STEEPLE_CHASE, CROSS...)
-    est traitee comme "Galop" (memes parametres pour Plat et Obstacle)."""
-    return (discipline or "").strip().upper().startswith("TROT")
+    """True si la discipline (telle que fournie par l'API PMU) correspond a
+    du Trot (Attele ou Monte). En pratique, le champ "discipline" renvoye par
+    l'API PMU vaut directement "ATTELE" ou "MONTE" (PAS "TROT_ATTELE" ni
+    "TROT_MONTE" comme on aurait pu le supposer -- confirme par capture
+    d'ecran : une course Attele affiche bien "ATTELE" comme discipline).
+    On garde aussi la reconnaissance de "TROT"/"TROT_ATTELE"/"TROT_MONTE" en
+    prefixe par securite, au cas ou l'API renverrait un jour ce format-la
+    (ou pour un import/restauration d'etat plus ancien). Toute autre
+    discipline (PLAT, HAIE, STEEPLE-CHASE, CROSS...) est traitee comme
+    "Galop" (memes parametres pour Plat/Obstacle)."""
+    d = (discipline or "").strip().upper()
+    return d.startswith("TROT") or d.startswith("ATTELE") or d.startswith("MONTE")
 
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
