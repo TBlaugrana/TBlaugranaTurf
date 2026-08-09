@@ -236,11 +236,13 @@
   .row.flash-down{ background:var(--danger-bg); }
 
   /* Un seul signal visuel fort par course : le cheval ayant subi la PLUS
-     GROSSE chute de cote (% Chute, écart T1 -> Live), évalué UNE FOIS à
-     T+30s après le départ, marquage définitif (reste visible ensuite quoi
-     qu'il arrive à sa cote). Le snapshot T1 et la restriction de plage de
-     cote dépendent du type de course (Trot : 5 min avant / plage 1-10 ;
-     Plat-Obstacle : 30s avant / aucune restriction) — cf. server.py. */
+     GROSSE chute de cote (% Chute, écart T1 -> Live), marquage définitif
+     (reste visible ensuite quoi qu'il arrive à sa cote). Le snapshot T1, le
+     délai d'évaluation du signal et la restriction de plage de cote
+     dépendent du type de course (Trot Attelé/Monté : snapshot au départ
+     (T0), évaluation à T0+30s, plage de cote live 1-10 ; Plat/Obstacle/
+     Haie/Steeple-chase : snapshot 30s avant le départ, évaluation à T+2min,
+     aucune restriction de plage) — cf. server.py. */
   .row.row-valuebet{
     border:2px solid var(--tote-fg);
     background:linear-gradient(0deg, rgba(232,178,77,.12), rgba(232,178,77,.12)), var(--surface);
@@ -465,6 +467,15 @@ function renderTable(rows){
     .sort((a, b) => a.coteLive - b.coteLive)
     .forEach((r, i) => { rangParNum[r.num] = i + 1; });
 
+  // Detection Trot vs Galop a partir du toteLabel deja affiche (ex:
+  // "TROT_ATTELE · 8 partants"), pour adapter les tooltips ci-dessous au
+  // delai de snapshot/evaluation reellement applique cote serveur (cf.
+  // is_trot_discipline dans server.py, meme logique cote client).
+  const isTrotDiscipline = (toteLabelEl.textContent || '').trim().toUpperCase().startsWith('TROT');
+  const snapshotTooltipHint = isTrotDiscipline
+    ? "snapshot pris au départ (T0), évalué à T0+30s, chevaux avec cote entre 1 et 10 uniquement"
+    : "snapshot pris 30s avant le départ, évalué à T+2min après le départ, sans restriction de cote";
+
   rows.forEach(r=>{
     const num = r.num;
     const nom = r.nom || `#${num}`;
@@ -517,7 +528,7 @@ function renderTable(rows){
     if(deltaEl.textContent !== coteT0Str) deltaEl.textContent = coteT0Str;
     deltaEl.classList.remove('up','down','flat');
     deltaEl.classList.add('flat');
-    deltaEl.title = "Cote Gagnant au moment du snapshot T1 (délai avant départ dépendant du type de course : 5 min en Trot, 30s en Plat/Obstacle)";
+    deltaEl.title = `Cote Gagnant au moment du snapshot T1 (${snapshotTooltipHint})`;
 
     const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
     const isFast = !!r.isFast;
@@ -536,16 +547,18 @@ function renderTable(rows){
 
     // Signal "VALUEBET" : marquage DÉFINITIF calculé côté serveur, UN SEUL
     // cheval par course — celui qui a subi la plus grosse chute de cote
-    // (% Chute, T1 -> Live) au moment de l'évaluation (T+30s après le
-    // départ). Une fois marqué, le cheval reste "valuebet" pour le reste de
-    // la course (bandeau ne disparaît plus), et reste visible dans le
-    // tableau (masquage par rang / hors-plage ignoré côté serveur pour ce
-    // cheval).
+    // (% Chute, T1 -> Live) au moment de l'évaluation. Ce délai d'évaluation
+    // dépend du type de course : T0+30s en Trot Attelé/Monté (snapshot pris
+    // au départ), T+2min en Plat/Obstacle/Haie/Steeple-chase (snapshot pris
+    // 30s avant le départ) — cf. server.py. Une fois marqué, le cheval reste
+    // "valuebet" pour le reste de la course (bandeau ne disparaît plus), et
+    // reste visible dans le tableau (masquage par rang / hors-plage ignoré
+    // côté serveur pour ce cheval).
     const isBigMove = !!r.isBigMove;
     const isValuebet = !!r.isValuebet;
     const valuebetEl = row.querySelector('.valuebet-tag');
     if(valuebetEl && isValuebet){
-      valuebetEl.title = `Plus grosse chute de cote de la course : ${pctChuteStr} depuis le snapshot T1 (évalué une fois à T+30s après le départ, figé ensuite)`;
+      valuebetEl.title = `Plus grosse chute de cote de la course : ${pctChuteStr} depuis le snapshot T1 (${snapshotTooltipHint})`;
     }
     row.classList.toggle('row-valuebet', isValuebet);
 
