@@ -467,11 +467,14 @@ function renderTable(rows){
     .sort((a, b) => a.coteLive - b.coteLive)
     .forEach((r, i) => { rangParNum[r.num] = i + 1; });
 
-  // Detection Trot vs Galop a partir du toteLabel deja affiche (ex:
-  // "TROT_ATTELE · 8 partants"), pour adapter les tooltips ci-dessous au
-  // delai de snapshot/evaluation reellement applique cote serveur (cf.
-  // is_trot_discipline dans server.py, meme logique cote client).
-  const isTrotDiscipline = (toteLabelEl.textContent || '').trim().toUpperCase().startsWith('TROT');
+  // Detection Trot vs Galop a partir du toteLabel deja affiche. Le champ
+  // discipline renvoye par l'API PMU vaut directement "ATTELE" ou "MONTE"
+  // (pas "TROT_ATTELE"/"TROT_MONTE") -- meme logique que is_trot_discipline
+  // cote serveur (server.py), a garder synchronisee avec elle.
+  const toteLabelUpper = (toteLabelEl.textContent || '').trim().toUpperCase();
+  const isTrotDiscipline = toteLabelUpper.startsWith('TROT')
+    || toteLabelUpper.startsWith('ATTELE')
+    || toteLabelUpper.startsWith('MONTE');
   const snapshotTooltipHint = isTrotDiscipline
     ? "snapshot pris au départ (T0), évalué à T0+30s, chevaux avec cote entre 1 et 10 uniquement"
     : "snapshot pris 30s avant le départ, évalué à T+2min après le départ, sans restriction de cote";
