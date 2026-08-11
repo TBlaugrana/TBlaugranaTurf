@@ -47,9 +47,8 @@ PORT = int(os.environ.get("PORT", 8000))
 # libelle technique "Snapshot T1 (...)" -- purement cosmetique, n'affecte
 # aucun calcul (les fenetres de strategie restent celles de STRATEGY_CONFIG).
 STRATEGY_WAIT_MESSAGE = (
-    "⏳ Calculs en cours en arriere-plan (strategies Gagnant/Place, mise fixe) "
-    "— patientez jusqu'a l'apparition d'un cheval : cela peut prendre jusqu'a "
-    "30 secondes apres l'heure de depart programmee (et non l'heure reelle)."
+    "⏳ Calcul en cours — un cheval peut apparaitre jusqu'a 30s apres "
+    "le depart programme."
 )
 
 PMU_PROG_HOST = "online.turfinfo.api.pmu.fr"
@@ -1069,6 +1068,15 @@ class Tracker:
         self.valuebet_eval_done = False  # True des que l'evaluation unique du signal valuebet (a self.valuebet_eval_after_s, selon la discipline) a eu lieu pour cette course
         self.tracking_started_at = None  # timestamp du debut du suivi de la course en cours (informatif)
         self.snapshot_taken = False      # True des que le snapshot T0 a ete capture (bascule mode warm-up -> mode normal)
+        # Pick fige par strategie ("gagnant"/"place") une fois trouve, pour
+        # cette course : evite qu'un cheval affiche disparaisse plus tard
+        # quand self.strategy_odds_history (retention glissante 6 min, cf.
+        # STRATEGY_HISTORY_RETENTION_S) finit par purger le point de DEBUT
+        # de fenetre (ex. T-5min pour Trot Gagnant) au fur et a mesure que
+        # le suivi avance dans la course -- sans ce gel, compute_strategy_pick
+        # se remettait a renvoyer None une fois ce point trop vieux, alors
+        # qu'un cheval avait deja ete valide entre-temps.
+        self.strategy_picks_frozen = {"gagnant": None, "place": None}
         self.last_reprog = 0.0
         self.last_save = 0.0
 
@@ -1093,6 +1101,7 @@ class Tracker:
                 "ema_last_t": self.ema_last_t,
                 "bigmove_seen": self.bigmove_seen,
                 "valuebet_seen": self.valuebet_seen,
+                "strategy_picks_frozen": self.strategy_picks_frozen,
                 "tracking_started_at": self.tracking_started_at,
                 "snapshot_taken": self.snapshot_taken,
                 "saved_at": time.time(),
@@ -1144,6 +1153,7 @@ class Tracker:
         self.ema_last_t = snap.get("ema_last_t") or {}
         self.bigmove_seen = snap.get("bigmove_seen") or {}
         self.valuebet_seen = snap.get("valuebet_seen") or {}
+        self.strategy_picks_frozen = snap.get("strategy_picks_frozen") or {"gagnant": None, "place": None}
         self.tracking_started_at = snap.get("tracking_started_at")
         # par defaut True (et pas False) pour la compatibilite avec un ancien
         # fichier d'etat sans ce champ : on suppose que le snapshot avait deja
@@ -1242,83 +1252,94 @@ class Tracker:
                          if depart_ms else None)
 
         def worker():
-            rapports = None
-            rapports_type = None
-            last_err = None
-            for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
-                try:
-                    rapports = fetch_rapports_definitifs(date_str, reunion, course)
-                    if rapports:
-                        rapports_type = "definitifs"
-                        break
-                except Exception as e:
-                    last_err = e
-                time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
-
-            if rapports is None:
-                # repli : les definitifs ne sont toujours pas la apres ~20 min,
-                # on tente les provisoires pour ne pas rentrer bredouille
-                try:
-                    rapports = fetch_rapports_provisoires(date_str, reunion, course)
-                    if rapports:
-                        rapports_type = "provisoires"
-                except Exception as e:
-                    last_err = e
-
-            if rapports is None:
-                print(f"[STRATEGY-LOG] {label} : rapports indisponibles apres "
-                      f"{RAPPORTS_FETCH_ATTEMPTS} tentatives (+ repli provisoires echoue). "
-                      f"Derniere erreur : {last_err!r}")
-            else:
-                print(f"[STRATEGY-LOG] {label} : rapports {rapports_type} recuperes avec succes "
-                      f"({len(picks)} strategie(s) avec un cheval retenu)")
-
-            # Classement final (best-effort, cf. extract_classement) : recupere
-            # une seule fois pour la course, puis assigne a chaque cheval.
-            participants_data = None
+            # BUG CORRIGE : avant, seule l'ecriture finale du fichier etait
+            # protegee par un try/except. Si la construction des entrees
+            # (extract_classement, json.dumps...) levait une exception
+            # inattendue -- par ex. sur un format de payload PMU jamais vu en
+            # vrai pour /rapports-definitifs ou /participants post-course --
+            # le thread worker() plantait AVANT d'atteindre le bloc d'ecriture,
+            # sans AUCUN message dans les logs : le journal restait vide sans
+            # la moindre trace de ce qui s'etait passe. Desormais TOUT le corps
+            # du worker est protege par un try/except qui logue systematique-
+            # ment l'erreur, pour ne plus jamais avoir d'echec 100% silencieux.
             try:
-                participants_data = fetch_participants_arrivee(date_str, reunion, course)
-            except Exception as e:
-                print(f"[STRATEGY-LOG] {label} : echec recuperation classement final : {e!r}")
+                rapports = None
+                rapports_type = None
+                last_err = None
+                for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
+                    try:
+                        rapports = fetch_rapports_definitifs(date_str, reunion, course)
+                        if rapports:
+                            rapports_type = "definitifs"
+                            break
+                    except Exception as e:
+                        last_err = e
+                    time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
 
-            lines = []
-            for strategie, pick in picks:
-                cheval = {
-                    "num": pick.get("num"),
-                    "nom": pick.get("nom"),
-                    "coteDebut": pick.get("coteDebut"),
-                    "coteFin": pick.get("coteFin"),
-                    "pctChute": pick.get("pctChute"),
-                    "classementFinal": extract_classement(participants_data, pick.get("num")),
-                }
-                entry = {
-                    "loggedAt": time.time(),
-                    "date": date_str,
-                    "reunion": reunion,
-                    "course": course,
-                    "label": label,
-                    "strategie": strategie,       # "gagnant" ou "place"
-                    "hippodrome": hippodrome,
-                    "paysCode": pays_code,
-                    "paysLabel": pays_label,
-                    "etrangere": etrangere,        # True/False/None (None si info indisponible)
-                    "discipline": discipline,      # "TROT", "PLAT", "OBSTACLE"... (tel que fourni par l'API PMU)
-                    "disciplineGroupe": discipline_groupe,  # PLAT / TROT / HAIE (cf. classify_discipline)
-                    "nbPartants": nb_partants,
-                    "heureDepart": heure_depart,
-                    "cheval": cheval,
-                    "rapports": rapports,           # None si toujours indisponible malgre les tentatives
-                    "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
-                }
-                lines.append(json.dumps(entry, ensure_ascii=False))
+                if rapports is None:
+                    # repli : les definitifs ne sont toujours pas la apres ~20 min,
+                    # on tente les provisoires pour ne pas rentrer bredouille
+                    try:
+                        rapports = fetch_rapports_provisoires(date_str, reunion, course)
+                        if rapports:
+                            rapports_type = "provisoires"
+                    except Exception as e:
+                        last_err = e
 
-            try:
+                if rapports is None:
+                    print(f"[STRATEGY-LOG] {label} : rapports indisponibles apres "
+                          f"{RAPPORTS_FETCH_ATTEMPTS} tentatives (+ repli provisoires echoue). "
+                          f"Derniere erreur : {last_err!r}")
+                else:
+                    print(f"[STRATEGY-LOG] {label} : rapports {rapports_type} recuperes avec succes "
+                          f"({len(picks)} strategie(s) avec un cheval retenu)")
+
+                # Classement final (best-effort, cf. extract_classement) : recupere
+                # une seule fois pour la course, puis assigne a chaque cheval.
+                participants_data = None
+                try:
+                    participants_data = fetch_participants_arrivee(date_str, reunion, course)
+                except Exception as e:
+                    print(f"[STRATEGY-LOG] {label} : echec recuperation classement final : {e!r}")
+
+                lines = []
+                for strategie, pick in picks:
+                    cheval = {
+                        "num": pick.get("num"),
+                        "nom": pick.get("nom"),
+                        "coteDebut": pick.get("coteDebut"),
+                        "coteFin": pick.get("coteFin"),
+                        "pctChute": pick.get("pctChute"),
+                        "classementFinal": extract_classement(participants_data, pick.get("num")),
+                    }
+                    entry = {
+                        "loggedAt": time.time(),
+                        "date": date_str,
+                        "reunion": reunion,
+                        "course": course,
+                        "label": label,
+                        "strategie": strategie,       # "gagnant" ou "place"
+                        "hippodrome": hippodrome,
+                        "paysCode": pays_code,
+                        "paysLabel": pays_label,
+                        "etrangere": etrangere,        # True/False/None (None si info indisponible)
+                        "discipline": discipline,      # "TROT", "PLAT", "OBSTACLE"... (tel que fourni par l'API PMU)
+                        "disciplineGroupe": discipline_groupe,  # PLAT / TROT / HAIE (cf. classify_discipline)
+                        "nbPartants": nb_partants,
+                        "heureDepart": heure_depart,
+                        "cheval": cheval,
+                        "rapports": rapports,           # None si toujours indisponible malgre les tentatives
+                        "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
+                    }
+                    lines.append(json.dumps(entry, ensure_ascii=False))
+
                 with VALUEBET_LOG_LOCK:
                     with open(VALUEBET_LOG_FILE, "a", encoding="utf-8") as f:
                         for line in lines:
                             f.write(line + "\n")
+                print(f"[STRATEGY-LOG] {label} : {len(lines)} ligne(s) ecrite(s) dans {VALUEBET_LOG_FILE}")
             except Exception as e:
-                print(f"[STRATEGY-LOG] echec ecriture journal : {e}")
+                print(f"[STRATEGY-LOG] {label} : ECHEC INATTENDU du worker (rien ecrit) : {e!r}")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1330,6 +1351,12 @@ class Tracker:
         if not chosen:
             set_state(courseInfo="Aucune course disponible.", statusLine="Aucune course disponible pour le moment.")
             return
+        # LOG DE DIAGNOSTIC : confirme systematiquement qu'une bascule de
+        # course a bien lieu (utile pour verifier que le service ne redemarre
+        # pas / ne reste pas bloque avant meme d'atteindre RACE_STALE_S, ce
+        # qui empecherait toute ecriture dans le journal valuebet).
+        print(f"[TRACKER] select_next_course : bascule de R{self.selected_reunion}C{self.selected_course} "
+              f"vers R{chosen['numReunion']}C{chosen['course']} ({chosen.get('libelle', '')})")
 
         # Juste avant de basculer vers la course suivante (pas avant : la
         # fenetre de chaque strategie doit avoir eu le temps de se
@@ -1340,14 +1367,23 @@ class Tracker:
         # encore sur la course qu'on quitte a cet instant precis (pas
         # encore ecrases par la suite de cette fonction).
         if self.selected_reunion is not None and self.selected_course is not None:
+            prev_label = f"R{self.selected_reunion}C{self.selected_course}"
             prev_gagnant, prev_place = self.compute_strategy_picks(time.time())
             prev_picks = []
             if prev_gagnant:
                 prev_picks.append(("gagnant", prev_gagnant))
             if prev_place:
                 prev_picks.append(("place", prev_place))
+            # LOG DE DIAGNOSTIC (ajoute pour comprendre pourquoi le CSV
+            # valuebet_log.csv restait vide) : indique systematiquement, a
+            # CHAQUE bascule de course, si une strategie a trouve un cheval
+            # ou non -- avant, en l'absence de pick, rien n'etait logue nulle
+            # part et il etait impossible de distinguer "aucun cheval ne
+            # correspond au critere" d'un probleme plus profond (switch de
+            # course qui n'a pas lieu, worker qui plante silencieusement...).
             if prev_picks:
-                prev_label = f"R{self.selected_reunion}C{self.selected_course}"
+                print(f"[STRATEGY-LOG] {prev_label} : pick(s) trouve(s) -> "
+                      f"{[s for s, _ in prev_picks]}")
                 prev_date = date_pmu(datetime.now(PARIS_TZ))
                 prev_course_info = next(
                     (c for c in self.all_courses
@@ -1358,6 +1394,9 @@ class Tracker:
                     prev_date, self.selected_reunion, self.selected_course, prev_label, prev_picks,
                     prev_course_info,
                 )
+            else:
+                print(f"[STRATEGY-LOG] {prev_label} : aucun cheval ne correspond au critere "
+                      f"pour Gagnant ni Place -> rien a logger pour cette course")
 
         self.selected_reunion = chosen["numReunion"]
         self.selected_course = chosen["course"]
@@ -1385,6 +1424,7 @@ class Tracker:
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
         self.strategy_odds_history = {}
+        self.strategy_picks_frozen = {"gagnant": None, "place": None}
         set_state(rows=[], snapLine=STRATEGY_WAIT_MESSAGE,
                   strategyGagnant=None, strategyPlace=None)
 
@@ -1648,15 +1688,31 @@ class Tracker:
     def compute_strategy_picks(self, now):
         """Calcule les 2 picks (Gagnant, Place) pour la course en cours,
         selon la config de la discipline detectee (cf. STRATEGY_CONFIG,
-        classify_discipline). Purement additif : lecture seule de
-        self.strategy_odds_history / self.depart_ts / self.selected_discipline
-        / self.favoris_order / self.horse_names -- aucune ecriture d'etat
-        partagee avec le suivi existant."""
+        classify_discipline). Chaque pick est FIGE des qu'il est trouve une
+        premiere fois (cf. self.strategy_picks_frozen) et renvoye tel quel
+        pour le reste de la course, meme si self.strategy_odds_history finit
+        par purger (retention glissante, STRATEGY_HISTORY_RETENTION_S) le
+        point de debut de fenetre necessaire au recalcul -- sans ca, un
+        cheval valide pouvait "disparaitre" plus tard alors qu'il avait deja
+        rempli le critere. Lecture/ecriture limitees a self.strategy_picks_frozen
+        (proprement remis a zero par course dans start_tracking) -- n'affecte
+        pas le suivi existant."""
         cfg = STRATEGY_CONFIG.get(classify_discipline(self.selected_discipline))
         if not cfg:
             return None, None
-        gagnant = self.compute_strategy_pick(cfg["gagnant"], now)
-        place = self.compute_strategy_pick(cfg["place"], now)
+
+        gagnant = self.strategy_picks_frozen.get("gagnant")
+        if gagnant is None:
+            gagnant = self.compute_strategy_pick(cfg["gagnant"], now)
+            if gagnant is not None:
+                self.strategy_picks_frozen["gagnant"] = gagnant
+
+        place = self.strategy_picks_frozen.get("place")
+        if place is None:
+            place = self.compute_strategy_pick(cfg["place"], now)
+            if place is not None:
+                self.strategy_picks_frozen["place"] = place
+
         return gagnant, place
 
     def handle_odds(self, data):
