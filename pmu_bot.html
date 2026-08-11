@@ -187,6 +187,26 @@
     color:#9aa89a;
     margin-top:2px;
   }
+  .tote-label-row{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    margin-top:2px;
+  }
+  .discipline-badge{
+    font-family:'JetBrains Mono',monospace;
+    font-size:9px;
+    font-weight:700;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--tote-bg);
+    background:var(--tote-fg);
+    padding:2px 7px;
+    border-radius:20px;
+    display:none;
+  }
+  .discipline-badge.show{ display:inline-block; }
   .snap-line{
     text-align:center;
     font-size:12px;
@@ -201,7 +221,81 @@
     margin-top:2px;
   }
 
-  .table-wrap{ flex:1; }
+  .table-wrap{ flex:1; display:flex; flex-direction:column; gap:14px; }
+  .strategy-section{ display:flex; flex-direction:column; gap:6px; }
+  .strategy-title{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    font-family:'Fraunces',serif;
+    font-weight:600;
+    font-size:16px;
+    color:var(--accent);
+    padding:0 2px;
+  }
+  .strategy-title .discipline-tag{
+    font-family:'JetBrains Mono',monospace;
+    font-size:9px;
+    font-weight:700;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--text-dim);
+    background:var(--surface-alt);
+    border:1px solid var(--border);
+    padding:2px 7px;
+    border-radius:20px;
+  }
+  .strategy-body{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .strategy-body .empty{
+    padding:16px 10px;
+  }
+  .pick-card{
+    background:var(--surface);
+    border:2px solid var(--tote-fg);
+    border-radius:9px;
+    padding:11px 14px;
+    display:flex;
+    align-items:center;
+    gap:11px;
+    box-shadow:0 0 0 3px rgba(232,178,77,.14);
+  }
+  .pick-card .num-badge{
+    flex:none;
+    width:30px; height:30px;
+    border-radius:50%;
+    background:var(--accent);
+    color:#fdf8ec;
+    font-family:'JetBrains Mono',monospace;
+    font-size:14px;
+    font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .pick-card .pick-info{ flex:1; min-width:0; }
+  .pick-card .pick-name{
+    font-size:15.5px;
+    font-weight:600;
+    color:var(--text);
+    line-height:1.15;
+  }
+  .pick-card .pick-detail{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    color:var(--text-dim);
+    margin-top:2px;
+  }
+  .pick-card .pick-chute{
+    flex:none;
+    font-family:'JetBrains Mono',monospace;
+    font-variant-numeric:tabular-nums;
+    font-weight:700;
+    font-size:16px;
+    color:var(--success);
+    text-align:right;
+  }
   .table-head{
     display:grid;
     grid-template-columns: 1fr 60px;
@@ -355,17 +449,33 @@
 
   <div class="tote">
     <div class="tote-clock" id="countdown">--:--</div>
-    <div class="tote-label" id="toteLabel"></div>
+    <div class="tote-label-row">
+      <div class="tote-label" id="toteLabel"></div>
+      <div class="discipline-badge" id="disciplineBadge"></div>
+    </div>
   </div>
   <div class="snap-line" id="snapLine" style="display:none;">📸 Snapshot : en attente</div>
   <div class="status-line" id="statusLine"></div>
 
   <div class="table-wrap">
-    <div class="table-head">
-      <span>Cheval</span>
-      <span>% Chute</span>
+    <div class="strategy-section">
+      <div class="strategy-title">
+        🏆 Stratégie Gagnante
+        <span class="discipline-tag" id="disciplineTagGagnant" style="display:none;"></span>
+      </div>
+      <div class="strategy-body" id="strategyGagnantBody">
+        <div class="empty">En attente des critères de sélection…</div>
+      </div>
     </div>
-    <div id="rows"><div class="empty">Chargement de la course en cours…</div></div>
+    <div class="strategy-section">
+      <div class="strategy-title">
+        🎯 Stratégie Placé
+        <span class="discipline-tag" id="disciplineTagPlace" style="display:none;"></span>
+      </div>
+      <div class="strategy-body" id="strategyPlaceBody">
+        <div class="empty">En attente des critères de sélection…</div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -387,12 +497,64 @@ const countdownEl = document.getElementById('countdown');
 const snapLineEl = document.getElementById('snapLine');
 const statusLineEl = document.getElementById('statusLine');
 const toteLabelEl = document.getElementById('toteLabel');
-const rowsEl = document.getElementById('rows');
+const disciplineBadgeEl = document.getElementById('disciplineBadge');
+const disciplineTagGagnantEl = document.getElementById('disciplineTagGagnant');
+const disciplineTagPlaceEl = document.getElementById('disciplineTagPlace');
+const strategyGagnantBodyEl = document.getElementById('strategyGagnantBody');
+const strategyPlaceBodyEl = document.getElementById('strategyPlaceBody');
 
-let rowEls = {};        // num -> élément DOM de la ligne (réutilisé d'un cycle à l'autre)
-let lastGagnant = {};   // num -> dernière cote Gagnant affichée (pour détecter les variations et flasher)
+let rowEls = {};        // num -> élément DOM de la ligne (réutilisé d'un cycle à l'autre, pour un usage futur)
+let lastGagnant = {};   // num -> dernière cote Gagnant affichée (pour détecter les variations et flasher, usage futur)
 let departTs = null;
 let pollTimer = null;
+let lastRows = [];      // dernier data.rows reçu du serveur, conservé tel quel pour brancher les futurs critères de sélection Gagnant/Placé
+
+// -----------------------------------------------------------------------
+// Détection de la discipline (Plat / Trot / Haie) à partir du toteLabel déjà
+// renvoyé par le serveur (qui commence par le champ "discipline" brut de
+// l'API PMU, ex: "PLAT", "ATTELE", "MONTE", "HAIE", "STEEPLE-CHASE",
+// "CROSS"...). Purement côté affichage : ne touche à aucun calcul de cote
+// ni à la sélection de course côté serveur.
+//   - TROT : Attelé + Monté
+//   - HAIE : Haie + Steeple-chase + Cross
+//   - PLAT : tout le reste (Plat, et fallback par défaut)
+// -----------------------------------------------------------------------
+function detectDiscipline(toteLabel){
+  const label = (toteLabel || '').trim().toUpperCase();
+  if(!label) return null;
+  if(label.startsWith('TROT') || label.startsWith('ATTELE') || label.startsWith('MONTE')){
+    return 'TROT';
+  }
+  if(label.startsWith('HAIE') || label.startsWith('STEEPLE') || label.startsWith('CROSS')){
+    return 'HAIE';
+  }
+  return 'PLAT';
+}
+
+function disciplineLabel(code){
+  if(code === 'TROT') return 'Trot';
+  if(code === 'HAIE') return 'Haie';
+  if(code === 'PLAT') return 'Plat';
+  return '';
+}
+
+function updateDisciplineDisplay(toteLabel){
+  const code = detectDiscipline(toteLabel);
+  const label = disciplineLabel(code);
+  if(label){
+    disciplineBadgeEl.textContent = label;
+    disciplineBadgeEl.classList.add('show');
+    disciplineTagGagnantEl.textContent = label;
+    disciplineTagGagnantEl.style.display = '';
+    disciplineTagPlaceEl.textContent = label;
+    disciplineTagPlaceEl.style.display = '';
+  } else {
+    disciplineBadgeEl.classList.remove('show');
+    disciplineTagGagnantEl.style.display = 'none';
+    disciplineTagPlaceEl.style.display = 'none';
+  }
+  return code;
+}
 
 function fmtCountdown(secs){
   if(secs >= 0){
@@ -444,166 +606,51 @@ function rangFavori(rang){
   return `${rang}e favori`;
 }
 
+// NOTE : le calcul des cotes, du % de chute, de la vitesse, du valuebet,
+// etc. continue de tourner exactement comme avant côté serveur (server.py,
+// non modifié) et arrive toujours dans data.rows à chaque poll. On garde
+// ces données en mémoire (lastRows) pour pouvoir brancher les critères de
+// sélection Gagnant/Placé dès qu'ils seront définis. En attendant, les 2
+// sections affichent juste un message d'attente (aucun tableau de cotes
+// affiché pour le moment, comme demandé).
 function renderTable(rows){
-  const emptyMsg = rowsEl.querySelector('.empty');
-  if(!rows || rows.length === 0){
-    if(!emptyMsg) rowsEl.innerHTML = '<div class="empty">Aucun cheval avec une cote disponible pour le moment.</div>';
+  lastRows = rows || [];
+  // -> ici viendra la logique de sélection (1 cheval Gagnant + 1 cheval
+  //    Placé par course, selon la discipline détectée) une fois les
+  //    critères fournis. Pour l'instant, on ne touche pas à l'affichage
+  //    des 2 sections (reste sur "En attente des critères de sélection…").
+}
+
+// Affiche le cheval retenu par une strategie (venant de data.strategyGagnant
+// / data.strategyPlace, calcules cote serveur -- cf. compute_strategy_picks
+// dans server.py) dans le conteneur donne, ou le message d'attente si le
+// serveur n'a rien renvoye (fenetre pas encore terminee ou aucun cheval ne
+// correspond au critere).
+function renderPick(containerEl, pick){
+  if(!pick){
+    containerEl.innerHTML = '<div class="empty">Aucun cheval ne correspond au critère pour le moment.</div>';
     return;
   }
-  if(emptyMsg) emptyMsg.remove();
-
-  const prevRects = {};
-  for(const num in rowEls){
-    prevRects[num] = rowEls[num].getBoundingClientRect();
-  }
-
-  // Rang au favoritisme : classement de tous les partants par cote (probabilité
-  // implicite) décroissante, indépendant de l'ordre d'affichage des lignes
-  // (qui reste par numéro de cheval). Les chevaux sans cote disponible n'ont
-  // pas de rang.
-  const rangParNum = {};
-  rows
-    .filter(r => r.coteLive !== null && r.coteLive !== undefined)
-    .sort((a, b) => a.coteLive - b.coteLive)
-    .forEach((r, i) => { rangParNum[r.num] = i + 1; });
-
-  // Detection Trot vs Galop a partir du toteLabel deja affiche. Le champ
-  // discipline renvoye par l'API PMU vaut directement "ATTELE" ou "MONTE"
-  // (pas "TROT_ATTELE"/"TROT_MONTE") -- meme logique que is_trot_discipline
-  // cote serveur (server.py), a garder synchronisee avec elle.
-  const toteLabelUpper = (toteLabelEl.textContent || '').trim().toUpperCase();
-  const isTrotDiscipline = toteLabelUpper.startsWith('TROT')
-    || toteLabelUpper.startsWith('ATTELE')
-    || toteLabelUpper.startsWith('MONTE');
-  const snapshotTooltipHint = isTrotDiscipline
-    ? "snapshot pris au départ (T0), évalué à T0+30s, chevaux avec cote entre 1 et 10 uniquement"
-    : "snapshot pris 30s avant le départ, évalué à T+2min après le départ, sans restriction de cote";
-
-  rows.forEach(r=>{
-    const num = r.num;
-    const nom = r.nom || `#${num}`;
-    const coteT0 = (r.coteT0 === null || r.coteT0 === undefined) ? undefined : r.coteT0;
-    const coteLive = (r.coteLive === null || r.coteLive === undefined) ? undefined : r.coteLive;
-    const pctChute = (r.pctChute === null || r.pctChute === undefined) ? undefined : r.pctChute;
-
-    const coteT0Str = coteT0 !== undefined ? coteT0.toFixed(1) : "—";
-    const coteLiveStr = coteLive !== undefined ? coteLive.toFixed(1) : "—";
-    const pctChuteStr = pctChute !== undefined ? `${pctChute >= 0 ? '+' : ''}${pctChute.toFixed(1)}%` : "—";
-    // Avant la capture du snapshot T1 (mode "warm-up"), il n'y a pas encore
-    // de % de chute a afficher : on montre la cote Gagnant en direct a la
-    // place, ce qui permet quand meme de classer les chevaux par favoritisme.
-    const mainStr = pctChute !== undefined ? pctChuteStr : coteLiveStr;
-
-    let row = rowEls[num];
-    if(!row){
-      row = buildRow(num);
-      rowEls[num] = row;
-    }
-
-    const nameTextEl = row.querySelector('.name-text');
-    if(nameTextEl.textContent !== nom) nameTextEl.textContent = nom;
-
-    const rangEl = row.querySelector('.fav-rank');
-    const rang = rangParNum[num];
-    const rangStr = rang ? rangFavori(rang) : '';
-    if(rangEl.textContent !== rangStr) rangEl.textContent = rangStr;
-
-    const coteEl = row.querySelector('.cote');
-    if(coteEl.textContent !== mainStr){
-      coteEl.textContent = mainStr;
-      const prevE = lastGagnant[num];
-      if(pctChute !== undefined && prevE !== undefined && pctChute !== prevE){
-        row.classList.remove('flash-up','flash-down');
-        void row.offsetWidth;
-        // % de chute qui augmente = cote qui chute encore plus (favorable)
-        row.classList.add(pctChute > prevE ? 'flash-up' : 'flash-down');
-        clearTimeout(row._flashTimer);
-        row._flashTimer = setTimeout(()=>row.classList.remove('flash-up','flash-down'), 500);
-      }
-    }
-    if(pctChute !== undefined) lastGagnant[num] = pctChute;
-    coteEl.title = pctChute !== undefined
-      ? "% de chute entre la cote au moment du snapshot (T1) et la cote en live — plus il est élevé, plus le cheval a fait chuter sa cote depuis le snapshot"
-      : "Cote Gagnant en direct — classement du plus au moins favori, snapshot T1 pas encore pris";
-
-    // Cote T1 : valeur de référence figée, affichage neutre (ne "flashe" pas)
-    const deltaEl = row.querySelector('.var');
-    if(deltaEl.textContent !== coteT0Str) deltaEl.textContent = coteT0Str;
-    deltaEl.classList.remove('up','down','flat');
-    deltaEl.classList.add('flat');
-    deltaEl.title = `Cote Gagnant au moment du snapshot T1 (${snapshotTooltipHint})`;
-
-    const spd = (r.speed === null || r.speed === undefined) ? undefined : r.speed;
-    const isFast = !!r.isFast;
-    const vitesseEl = row.querySelector('.vitesse');
-    if(vitesseEl){
-      if(vitesseEl.textContent !== coteLiveStr) vitesseEl.textContent = coteLiveStr;
-      vitesseEl.classList.remove('up','down','flat');
-      if(pctChute === undefined) vitesseEl.classList.add('flat');
-      else if(pctChute > 0) vitesseEl.classList.add('up');
-      else if(pctChute < 0) vitesseEl.classList.add('down');
-      else vitesseEl.classList.add('flat');
-      vitesseEl.title = isFast
-        ? `Cote Gagnant en live — ⚡ mouvement rapide (${spd !== undefined ? (spd >= 0 ? '+' : '') + spd.toFixed(1) : '—'} %/min)`
-        : "Cote Gagnant en live (probabilité implicite actuelle)";
-    }
-
-    // Signal "VALUEBET" : marquage DÉFINITIF calculé côté serveur, UN SEUL
-    // cheval par course — celui qui a subi la plus grosse chute de cote
-    // (% Chute, T1 -> Live) au moment de l'évaluation. Ce délai d'évaluation
-    // dépend du type de course : T0+30s en Trot Attelé/Monté (snapshot pris
-    // au départ), T+2min en Plat/Obstacle/Haie/Steeple-chase (snapshot pris
-    // 30s avant le départ) — cf. server.py. Une fois marqué, le cheval reste
-    // "valuebet" pour le reste de la course (bandeau ne disparaît plus), et
-    // reste visible dans le tableau (masquage par rang / hors-plage ignoré
-    // côté serveur pour ce cheval).
-    const isBigMove = !!r.isBigMove;
-    const isValuebet = !!r.isValuebet;
-    const valuebetEl = row.querySelector('.valuebet-tag');
-    if(valuebetEl && isValuebet){
-      valuebetEl.title = `Plus grosse chute de cote de la course : ${pctChuteStr} depuis le snapshot T1 (${snapshotTooltipHint})`;
-    }
-    row.classList.toggle('row-valuebet', isValuebet);
-
-    // ne montre que les GAINERS_TOP_N chevaux (6) avec la plus forte progression
-    // de part de marché (Gagnant) sur les 15 dernières secondes ; un cheval qui
-    // sort du classement est simplement masqué (pas supprimé) donc il réapparaît
-    // instantanément dès qu'il y revient — calcul fait côté serveur, en continu
-    row.classList.toggle('row-hidden', !!r.hidden);
-
-    rowsEl.appendChild(row);
-  });
-
-  const presentNums = new Set(rows.map(r=>r.num));
-  for(const num in rowEls){
-    if(!presentNums.has(num)){
-      rowEls[num].remove();
-      delete rowEls[num];
-    }
-  }
-
-
-  rowsEl.querySelectorAll('.row:not(.row-hidden)').forEach(el=>{
-    const prev = prevRects[el.dataset.num];
-    if(prev){
-      const next = el.getBoundingClientRect();
-      const dy = prev.top - next.top;
-      if(dy !== 0){
-        el.style.transition = "none";
-        el.style.transform = `translateY(${dy}px)`;
-        requestAnimationFrame(()=>{
-          el.style.transition = "transform .35s ease, background-color .4s ease";
-          el.style.transform = "translateY(0)";
-        });
-      }
-    }
-  });
+  const coteFinStr = (pick.coteFin !== null && pick.coteFin !== undefined) ? pick.coteFin.toFixed(1) : '—';
+  const coteDebutStr = (pick.coteDebut !== null && pick.coteDebut !== undefined) ? pick.coteDebut.toFixed(1) : '—';
+  const pctStr = (pick.pctChute !== null && pick.pctChute !== undefined) ? `-${pick.pctChute.toFixed(1)}%` : '—';
+  containerEl.innerHTML = `
+    <div class="pick-card">
+      <span class="num-badge">${pick.num}</span>
+      <div class="pick-info">
+        <div class="pick-name">${pick.nom || `#${pick.num}`}</div>
+        <div class="pick-detail">Cote ${coteDebutStr} → ${coteFinStr}</div>
+      </div>
+      <div class="pick-chute">${pctStr}</div>
+    </div>
+  `;
 }
 
 function applyState(data){
   courseInfoEl.textContent = data.courseInfo || 'Chargement…';
   departTs = data.departTs;
   toteLabelEl.textContent = data.toteLabel || '';
+  updateDisciplineDisplay(data.toteLabel);
 
   if(data.snapLine){
     snapLineEl.textContent = data.snapLine;
@@ -620,6 +667,8 @@ function applyState(data){
   }
 
   renderTable(data.rows);
+  renderPick(strategyGagnantBodyEl, data.strategyGagnant);
+  renderPick(strategyPlaceBodyEl, data.strategyPlace);
 }
 
 async function pollState(){
