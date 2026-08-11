@@ -42,6 +42,16 @@ PARIS_TZ = ZoneInfo("Europe/Paris")
 
 PORT = int(os.environ.get("PORT", 8000))
 
+# Message affiche en zone "snapLine" tant qu'aucune strategie (Gagnant/Place)
+# n'a encore produit de cheval sur la course en cours. Remplace l'ancien
+# libelle technique "Snapshot T1 (...)" -- purement cosmetique, n'affecte
+# aucun calcul (les fenetres de strategie restent celles de STRATEGY_CONFIG).
+STRATEGY_WAIT_MESSAGE = (
+    "⏳ Calculs en cours en arriere-plan (strategies Gagnant/Place, mise fixe) "
+    "— patientez jusqu'a l'apparition d'un cheval : cela peut prendre jusqu'a "
+    "30 secondes apres l'heure de depart programmee (et non l'heure reelle)."
+)
+
 PMU_PROG_HOST = "online.turfinfo.api.pmu.fr"
 PMU_PROG_PREFIX = "/rest/client/61/"
 PMU_CIT_HOST = "offline.turfinfo.api.pmu.fr"
@@ -238,14 +248,29 @@ STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker_s
 SAVE_INTERVAL_S = 5              # ecrit l'etat sur disque au plus toutes les 5s
 
 # ---------------------------------------------------------------------------
-# Journal silencieux des signaux valuebet (pour analyse ulterieure : ROI,
-# taux de reussite, etc.). N'affecte ni l'interface ni le fonctionnement du
-# suivi : c'est un simple fichier ecrit en tache de fond, jamais lu ni
-# expose par /api/state. A chaque bascule vers la course suivante, on fige
-# la liste des chevaux marques valuebet sur la course qu'on quitte (pas
-# avant, pour laisser le marquage se stabiliser jusqu'au dernier moment),
-# puis on va chercher en arriere-plan les rapports definitifs PMU de cette
-# course pour pouvoir calculer un ROI plus tard.
+# Journal silencieux des picks de STRATEGIE (pour analyse ulterieure : ROI,
+# taux de reussite, etc., calcules SEPAREMENT pour chaque strategie). N'af-
+# fecte ni l'interface ni le fonctionnement du suivi : c'est un simple
+# fichier ecrit en tache de fond, jamais lu ni expose par /api/state.
+#
+# IMPORTANT (evolution) : ce journal s'appelait a l'origine "valuebet_log"
+# et enregistrait le signal "valuebet" (plus grosse chute de cote a
+# l'evaluation). Il a ete transforme pour enregistrer desormais le cheval
+# retenu par CHACUNE des 2 strategies affichees sur la page ("Simple
+# Gagnant" et "Simple Place", cf. STRATEGY_CONFIG / compute_strategy_pick),
+# course par course et discipline par discipline, avec une colonne
+# "strategie" ("gagnant" / "place") pour pouvoir isoler la rentabilite de
+# chaque strategie a la fin de la journee. Le nom du fichier/des variables
+# ("valuebet_log", VALUEBET_LOG_FILE...) a ete volontairement conserve pour
+# ne rien casser ailleurs (endpoints /api/valuebet-log*, export .zip...).
+# Le signal "valuebet" (badge/marquage a l'ecran) continue lui d'exister
+# tel quel pour l'affichage -- seul CE journal ne l'enregistre plus.
+#
+# A chaque bascule vers la course suivante, on fige le pick final de chaque
+# strategie sur la course qu'on quitte (pas avant : la fenetre de la
+# strategie doit etre terminee), puis on va chercher en arriere-plan les
+# rapports definitifs PMU de cette course (une seule fois, partages entre
+# les 2 strategies) pour pouvoir calculer un ROI plus tard.
 # ---------------------------------------------------------------------------
 VALUEBET_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "valuebet_log.jsonl")
 VALUEBET_LOG_LOCK = threading.Lock()
@@ -353,21 +378,33 @@ def proba_implicite(cote):
 
 
 def build_valuebet_csv():
-    """Lit le journal valuebet_log.jsonl (une ligne JSON par course) et le
-    met a plat en CSV, une ligne par cheval valuebet. Colonnes best-effort
-    pour Gagnant/Place ; la colonne rapportsRawJson garde toujours les
-    rapports bruts de la course en secours si l'extraction ci-dessus ne
-    trouve rien (format PMU pas garanti identique pour tous les paris)."""
+    """Lit le journal valuebet_log.jsonl et le met a plat en CSV, UNE LIGNE
+    PAR CHEVAL RETENU PAR UNE STRATEGIE (colonne "strategie" : "gagnant" ou
+    "place", cf. compute_strategy_pick / STRATEGY_CONFIG). Une course peut
+    donc produire 0, 1 ou 2 lignes (une par strategie ayant trouve un
+    cheval correspondant a son critere).
+
+    Colonnes "mise"/"gain"/"profit" calculees directement (mise fixe de 1
+    unite par cheval retenu ; gain = dividende PMU correspondant au type de
+    pari de la strategie -- Gagnant ou Place -- si le cheval a rapporte,
+    0 sinon) pour permettre un simple tableau croise dynamique (par
+    "strategie" et/ou "disciplineGroupe") et obtenir la rentabilite de
+    chaque strategie en fin de journee sans calcul supplementaire.
+
+    Compatibilite : les anciennes lignes du journal (format d'avant la
+    refonte, signal "valuebet") n'ont pas de champ "cheval" et sont
+    ignorees silencieusement ici (rien a en tirer pour un calcul de
+    rentabilite par strategie)."""
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
-        "date", "reunion", "course", "label", "hippodrome", "paysCode", "paysLabel", "etrangere", "discipline",
-        "nbPartants", "heureDepart", "nbValuebetsSimultanes",
-        "loggedAt", "num", "nom", "coteT1", "probaImpliciteT1", "pctChuteAuMarquage", "marqueAt",
-        "coteAuMarquage", "probaImpliciteAuMarquage",
-        "coteLiveFinale", "probaImpliciteFinale", "pctChuteFinale", "deltaProbaAuMarquage", "deltaProbaFinale",
-        "delaiSignalDepartMin", "classementFinal",
-        "dividendeGagnant", "dividendePlace", "rapportsType", "rapportsRawJson",
+        "date", "reunion", "course", "label", "strategie", "discipline", "disciplineGroupe",
+        "hippodrome", "paysCode", "paysLabel", "etrangere", "nbPartants", "heureDepart",
+        "loggedAt", "num", "nom",
+        "coteDebut", "probaImpliciteDebut", "coteFin", "probaImpliciteFin",
+        "pctChute", "deltaProba", "classementFinal",
+        "dividende", "mise", "gain", "profit",
+        "rapportsType", "rapportsRawJson",
     ])
     try:
         with open(VALUEBET_LOG_FILE, "r", encoding="utf-8") as f:
@@ -379,59 +416,56 @@ def build_valuebet_csv():
                     entry = json.loads(line)
                 except Exception:
                     continue
+                cheval = entry.get("cheval")
+                if not cheval:
+                    continue  # ancienne ligne (pre-refonte, signal valuebet) : rien a exploiter ici
+                strategie = entry.get("strategie", "")
+                num = cheval.get("num")
                 rapports = entry.get("rapports")
                 rapports_raw = json.dumps(rapports, ensure_ascii=False) if rapports is not None else ""
                 logged_at = entry.get("loggedAt")
                 logged_at_str = (datetime.fromtimestamp(logged_at, tz=PARIS_TZ).isoformat()
                                   if logged_at else "")
-                for h in (entry.get("valuebetHorses") or []):
-                    num = h.get("num")
-                    marque_at = h.get("marqueAt")
-                    marque_at_str = (datetime.fromtimestamp(marque_at, tz=PARIS_TZ).isoformat()
-                                      if marque_at else "")
-                    cote_t1 = h.get("coteT1")
-                    pct_marquage = h.get("pctChuteAuMarquage")
-                    cote_finale = h.get("coteLiveFinale")
-                    cote_au_marquage = (cote_t1 * (1 - pct_marquage / 100.0)
-                                         if cote_t1 is not None and pct_marquage is not None else None)
-                    delta_proba_marquage = delta_proba(cote_t1, cote_au_marquage)
-                    delta_proba_finale = delta_proba(cote_t1, cote_finale)
-                    writer.writerow([
-                        entry.get("date", ""),
-                        entry.get("reunion", ""),
-                        entry.get("course", ""),
-                        entry.get("label", ""),
-                        entry.get("hippodrome", ""),
-                        entry.get("paysCode", ""),
-                        entry.get("paysLabel", ""),
-                        entry.get("etrangere", ""),
-                        entry.get("discipline", ""),
-                        entry.get("nbPartants", ""),
-                        entry.get("heureDepart", ""),
-                        entry.get("nbValuebetsSimultanes", ""),
-                        logged_at_str,
-                        num,
-                        h.get("nom", ""),
-                        cote_t1,
-                        proba_implicite(cote_t1),
-                        pct_marquage,
-                        marque_at_str,
-                        cote_au_marquage,
-                        proba_implicite(cote_au_marquage),
-                        cote_finale,
-                        proba_implicite(cote_finale),
-                        h.get("pctChuteFinale", ""),
-                        delta_proba_marquage,
-                        delta_proba_finale,
-                        h.get("delaiSignalDepartMin", ""),
-                        h.get("classementFinal", ""),
-                        extract_dividende(rapports, num, "GAGNANT"),
-                        extract_dividende(rapports, num, "PLACE"),
-                        entry.get("rapportsType", ""),
-                        rapports_raw,
-                    ])
+                cote_debut = cheval.get("coteDebut")
+                cote_fin = cheval.get("coteFin")
+                keyword = "GAGNANT" if strategie == "gagnant" else "PLACE"
+                dividende = extract_dividende(rapports, num, keyword)
+                mise = 1
+                gain = dividende if dividende is not None else 0
+                profit = gain - mise
+                writer.writerow([
+                    entry.get("date", ""),
+                    entry.get("reunion", ""),
+                    entry.get("course", ""),
+                    entry.get("label", ""),
+                    strategie,
+                    entry.get("discipline", ""),
+                    entry.get("disciplineGroupe", ""),
+                    entry.get("hippodrome", ""),
+                    entry.get("paysCode", ""),
+                    entry.get("paysLabel", ""),
+                    entry.get("etrangere", ""),
+                    entry.get("nbPartants", ""),
+                    entry.get("heureDepart", ""),
+                    logged_at_str,
+                    num,
+                    cheval.get("nom", ""),
+                    cote_debut,
+                    proba_implicite(cote_debut),
+                    cote_fin,
+                    proba_implicite(cote_fin),
+                    cheval.get("pctChute", ""),
+                    delta_proba(cote_debut, cote_fin),
+                    cheval.get("classementFinal", ""),
+                    dividende if dividende is not None else "",
+                    mise,
+                    gain,
+                    profit,
+                    entry.get("rapportsType", ""),
+                    rapports_raw,
+                ])
     except FileNotFoundError:
-        pass  # aucun signal valuebet enregistre pour l'instant -> CSV avec juste l'entete
+        pass  # aucun pick de strategie enregistre pour l'instant -> CSV avec juste l'entete
     return buf.getvalue()
 
 
@@ -1174,59 +1208,38 @@ class Tracker:
         except Exception as e:
             set_state(statusLine=f"Erreur programme : {e}")
 
-    # -- journal silencieux valuebet (aucun impact interface/etat) --------
-    def capture_valuebet_snapshot(self):
-        """Fige la liste des chevaux actuellement marques valuebet sur la
-        course en cours, avec de quoi les identifier et calculer un ROI
-        ensuite. Fournit deux photos de la cote de chaque cheval :
-        - au moment ou le signal valuebet s'est declenche pour la premiere
-          fois (pctChuteAuMarquage, fige des ce moment-la, cf. valuebet_seen) ;
-        - juste avant la bascule vers la course suivante, donc proche du
-          depart reel (coteLiveFinale / pctChuteFinale), recalculee ici a
-          partir de la derniere cote live vue (cote_live_last)."""
-        horses = []
-        for num, info in self.valuebet_seen.items():
-            cote_t1 = self.cote_t1.get(num)
-            cote_live_finale = self.cote_live_last.get(num)
-            pct_chute_finale = None
-            if cote_t1 is not None and cote_live_finale is not None and cote_t1 > 0:
-                pct_chute_finale = (cote_t1 - cote_live_finale) / cote_t1 * 100
-            marque_at = info.get("at")
-            delai_signal_depart_min = None
-            if marque_at is not None and self.depart_ts is not None:
-                delai_signal_depart_min = (self.depart_ts - marque_at) / 60.0
-            horses.append({
-                "num": num,
-                "nom": self.horse_names.get(num, f"#{num}"),
-                "coteT1": cote_t1,
-                "pctChuteAuMarquage": info.get("pctChute"),
-                "marqueAt": marque_at,
-                "coteLiveFinale": cote_live_finale,
-                "pctChuteFinale": pct_chute_finale,
-                "delaiSignalDepartMin": delai_signal_depart_min,
-            })
-        return horses
-
-    def log_race_valuebets_async(self, date_str, reunion, course, label, horses, course_info=None):
+    # -- journal silencieux des picks de strategie (aucun impact interface/etat) --
+    def log_race_strategy_picks_async(self, date_str, reunion, course, label, picks, course_info=None):
         """Lance en tache de fond (thread separe, ne bloque jamais la boucle
-        de suivi) la recuperation des rapports definitifs de la course
-        qu'on vient de quitter, puis ecrit une ligne JSON dans le journal.
-        Ne fait rien si aucun cheval n'etait marque valuebet (rien a logger).
+        de suivi) la recuperation des rapports definitifs de la course qu'on
+        vient de quitter, puis ecrit UNE LIGNE JSON PAR STRATEGIE dans le
+        journal (colonne "strategie" a plat cote CSV, cf. build_valuebet_csv).
+
+        picks : liste de tuples (strategie, pick) ou strategie vaut
+        "gagnant" ou "place" et pick est le dict renvoye par
+        compute_strategy_pick (num/nom/coteDebut/coteFin/pctChute). Ne fait
+        rien si la liste est vide (aucune strategie n'a trouve de cheval sur
+        cette course -> rien a logger).
+
+        Les rapports definitifs + le classement final ne sont recuperes
+        qu'UNE SEULE FOIS pour la course (partages entre les strategies),
+        pour ne pas multiplier les appels a l'API PMU.
+
         course_info (dict issu de self.all_courses, optionnel) fournit le
-        pays/hippodrome pour pouvoir filtrer les courses etrangeres plus
-        tard sans devoir re-parser le programme."""
-        if not horses:
+        pays/hippodrome/discipline pour pouvoir filtrer/regrouper plus tard
+        sans devoir re-parser le programme."""
+        if not picks:
             return
         hippodrome = (course_info or {}).get("hip")
         pays_code = (course_info or {}).get("paysCode")
         pays_label = (course_info or {}).get("paysLabel")
         etrangere = (course_info or {}).get("etrangere")
         discipline = (course_info or {}).get("discipline")
+        discipline_groupe = classify_discipline(discipline)  # PLAT / TROT / HAIE
         nb_partants = (course_info or {}).get("nbPartants")
         depart_ms = (course_info or {}).get("depart")
         heure_depart = (datetime.fromtimestamp(depart_ms / 1000.0, tz=PARIS_TZ).isoformat()
                          if depart_ms else None)
-        nb_valuebets_simultanes = len(horses)
 
         def worker():
             rapports = None
@@ -1253,12 +1266,12 @@ class Tracker:
                     last_err = e
 
             if rapports is None:
-                print(f"[VALUEBET-LOG] {label} : rapports indisponibles apres "
+                print(f"[STRATEGY-LOG] {label} : rapports indisponibles apres "
                       f"{RAPPORTS_FETCH_ATTEMPTS} tentatives (+ repli provisoires echoue). "
                       f"Derniere erreur : {last_err!r}")
             else:
-                print(f"[VALUEBET-LOG] {label} : rapports {rapports_type} recuperes avec succes "
-                      f"({len(horses)} cheval(aux) valuebet)")
+                print(f"[STRATEGY-LOG] {label} : rapports {rapports_type} recuperes avec succes "
+                      f"({len(picks)} strategie(s) avec un cheval retenu)")
 
             # Classement final (best-effort, cf. extract_classement) : recupere
             # une seule fois pour la course, puis assigne a chaque cheval.
@@ -1266,34 +1279,46 @@ class Tracker:
             try:
                 participants_data = fetch_participants_arrivee(date_str, reunion, course)
             except Exception as e:
-                print(f"[VALUEBET-LOG] {label} : echec recuperation classement final : {e!r}")
-            for h in horses:
-                h["classementFinal"] = extract_classement(participants_data, h["num"])
+                print(f"[STRATEGY-LOG] {label} : echec recuperation classement final : {e!r}")
 
-            entry = {
-                "loggedAt": time.time(),
-                "date": date_str,
-                "reunion": reunion,
-                "course": course,
-                "label": label,
-                "hippodrome": hippodrome,
-                "paysCode": pays_code,
-                "paysLabel": pays_label,
-                "etrangere": etrangere,  # True/False/None (None si info indisponible)
-                "discipline": discipline,  # "TROT", "PLAT", "OBSTACLE"... (tel que fourni par l'API PMU)
-                "nbPartants": nb_partants,
-                "heureDepart": heure_depart,
-                "nbValuebetsSimultanes": nb_valuebets_simultanes,
-                "valuebetHorses": horses,
-                "rapports": rapports,           # None si toujours indisponible malgre les tentatives
-                "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
-            }
+            lines = []
+            for strategie, pick in picks:
+                cheval = {
+                    "num": pick.get("num"),
+                    "nom": pick.get("nom"),
+                    "coteDebut": pick.get("coteDebut"),
+                    "coteFin": pick.get("coteFin"),
+                    "pctChute": pick.get("pctChute"),
+                    "classementFinal": extract_classement(participants_data, pick.get("num")),
+                }
+                entry = {
+                    "loggedAt": time.time(),
+                    "date": date_str,
+                    "reunion": reunion,
+                    "course": course,
+                    "label": label,
+                    "strategie": strategie,       # "gagnant" ou "place"
+                    "hippodrome": hippodrome,
+                    "paysCode": pays_code,
+                    "paysLabel": pays_label,
+                    "etrangere": etrangere,        # True/False/None (None si info indisponible)
+                    "discipline": discipline,      # "TROT", "PLAT", "OBSTACLE"... (tel que fourni par l'API PMU)
+                    "disciplineGroupe": discipline_groupe,  # PLAT / TROT / HAIE (cf. classify_discipline)
+                    "nbPartants": nb_partants,
+                    "heureDepart": heure_depart,
+                    "cheval": cheval,
+                    "rapports": rapports,           # None si toujours indisponible malgre les tentatives
+                    "rapportsType": rapports_type,  # "definitifs", "provisoires" ou None
+                }
+                lines.append(json.dumps(entry, ensure_ascii=False))
+
             try:
                 with VALUEBET_LOG_LOCK:
                     with open(VALUEBET_LOG_FILE, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                        for line in lines:
+                            f.write(line + "\n")
             except Exception as e:
-                print(f"[VALUEBET-LOG] echec ecriture journal : {e}")
+                print(f"[STRATEGY-LOG] echec ecriture journal : {e}")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1306,23 +1331,33 @@ class Tracker:
             set_state(courseInfo="Aucune course disponible.", statusLine="Aucune course disponible pour le moment.")
             return
 
-        # Juste avant de basculer vers la course suivante (pas avant : le
-        # marquage valuebet doit avoir le temps de se stabiliser jusqu'au
-        # bout), on fige silencieusement les chevaux valuebet de la course
-        # qu'on quitte et on programme la recuperation de ses rapports.
+        # Juste avant de basculer vers la course suivante (pas avant : la
+        # fenetre de chaque strategie doit avoir eu le temps de se
+        # terminer), on fige silencieusement le pick final de chaque
+        # strategie (Gagnant / Place) sur la course qu'on quitte et on
+        # programme la recuperation de ses rapports. self.depart_ts /
+        # self.selected_discipline / self.strategy_odds_history pointent
+        # encore sur la course qu'on quitte a cet instant precis (pas
+        # encore ecrases par la suite de cette fonction).
         if self.selected_reunion is not None and self.selected_course is not None:
-            prev_horses = self.capture_valuebet_snapshot()
-            prev_label = f"R{self.selected_reunion}C{self.selected_course}"
-            prev_date = date_pmu(datetime.now(PARIS_TZ))
-            prev_course_info = next(
-                (c for c in self.all_courses
-                 if c["numReunion"] == self.selected_reunion and c["course"] == self.selected_course),
-                None,
-            )
-            self.log_race_valuebets_async(
-                prev_date, self.selected_reunion, self.selected_course, prev_label, prev_horses,
-                prev_course_info,
-            )
+            prev_gagnant, prev_place = self.compute_strategy_picks(time.time())
+            prev_picks = []
+            if prev_gagnant:
+                prev_picks.append(("gagnant", prev_gagnant))
+            if prev_place:
+                prev_picks.append(("place", prev_place))
+            if prev_picks:
+                prev_label = f"R{self.selected_reunion}C{self.selected_course}"
+                prev_date = date_pmu(datetime.now(PARIS_TZ))
+                prev_course_info = next(
+                    (c for c in self.all_courses
+                     if c["numReunion"] == self.selected_reunion and c["course"] == self.selected_course),
+                    None,
+                )
+                self.log_race_strategy_picks_async(
+                    prev_date, self.selected_reunion, self.selected_course, prev_label, prev_picks,
+                    prev_course_info,
+                )
 
         self.selected_reunion = chosen["numReunion"]
         self.selected_course = chosen["course"]
@@ -1350,7 +1385,7 @@ class Tracker:
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
         self.strategy_odds_history = {}
-        set_state(rows=[], snapLine=f"📸 Snapshot T1 ({self.snapshot_phrase()}) — en attente…",
+        set_state(rows=[], snapLine=STRATEGY_WAIT_MESSAGE,
                   strategyGagnant=None, strategyPlace=None)
 
     def refresh_programme_background(self):
@@ -1658,13 +1693,7 @@ class Tracker:
                 self.snapshot_taken = True
             else:
                 rows = self.build_warmup_rows(gagnant_map)
-                if snapshot_ts is not None:
-                    remaining_s = max(0, int(snapshot_ts - now))
-                    m, s = divmod(remaining_s, 60)
-                    remaining_str = f"{m}:{s:02d}"
-                    snap_msg = f"📸 Snapshot T1 ({self.snapshot_phrase()}) — dans {remaining_str}"
-                else:
-                    snap_msg = f"📸 Snapshot T1 ({self.snapshot_phrase()}) — en attente de l'heure de depart…"
+                snap_msg = STRATEGY_WAIT_MESSAGE
                 strategy_gagnant, strategy_place = self.compute_strategy_picks(now)
                 set_state(
                     rows=rows,
