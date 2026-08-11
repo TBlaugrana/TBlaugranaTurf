@@ -153,6 +153,66 @@ def is_trot_discipline(discipline):
     d = (discipline or "").strip().upper()
     return d.startswith("TROT") or d.startswith("ATTELE") or d.startswith("MONTE")
 
+
+# ---------------------------------------------------------------------------
+# Strategies "Gagnant" / "Place" affichees sur la page (2 sections empilees,
+# une par type de pari). Un seul cheval retenu par strategie : celui qui a
+# la PLUS GROSSE CHUTE DE COTE (cote decimale brute -- meme definition que
+# pct_chute existant plus bas dans handle_odds : (cote_debut - cote_fin) /
+# cote_debut * 100) entre un instant de DEBUT et un instant de FIN, tous
+# deux fixes relativement a l'heure de depart PROGRAMMEE (self.depart_ts),
+# parmi les chevaux dont la cote a l'instant de FIN ("cote d'arrivee")
+# tombe dans [cote_min, cote_max]. Si aucun cheval ne correspond (ou si la
+# fenetre n'est pas encore terminee), rien n'est renvoye et le client
+# affiche "Aucun cheval ne correspond au critere pour le moment.".
+#
+# Fonctionnalite ENTIEREMENT ADDITIVE : calcule a partir d'un historique de
+# cotes DEDIE (self.strategy_odds_history, cf. update_strategy_history),
+# separe de self.odds_history (retention courte, 45s, utilise par le
+# suivi/vitesse/valuebet existants -- non modifie). Ne lit ni n'ecrit aucun
+# etat partage avec le reste du Tracker, hormis en lecture seule
+# (self.depart_ts, self.selected_discipline, self.favoris_order,
+# self.horse_names).
+#
+# Discipline (regroupement demande) :
+#   PLAT : tout sauf Trot et Haie/Steeple/Cross (cf. classify_discipline)
+#   TROT : Attele + Monte
+#   HAIE : Haie + Steeple-chase + Cross
+# ---------------------------------------------------------------------------
+STRATEGY_HISTORY_RETENTION_S = 6 * 60  # 6 min : couvre la fenetre la plus large (Trot Gagnant : T-5min a T-2min)
+
+STRATEGY_CONFIG = {
+    "PLAT": {
+        "gagnant": {"start_offset_s": -30,  "end_offset_s": 0,   "cote_min": 6,  "cote_max": 10},
+        "place":   {"start_offset_s": -90,  "end_offset_s": 30,  "cote_min": 1,  "cote_max": 100},
+    },
+    "TROT": {
+        "gagnant": {"start_offset_s": -300, "end_offset_s": -120, "cote_min": 1, "cote_max": 6},
+        "place":   {"start_offset_s": 0,    "end_offset_s": 30,   "cote_min": 1, "cote_max": 10},
+    },
+    "HAIE": {
+        "gagnant": {"start_offset_s": -60,  "end_offset_s": 30,  "cote_min": 6, "cote_max": 10},
+        "place":   {"start_offset_s": -150, "end_offset_s": 30,  "cote_min": 1, "cote_max": 6},
+    },
+}
+
+
+def classify_discipline(discipline):
+    """Classe la discipline PMU brute en 'PLAT' / 'TROT' / 'HAIE' pour le
+    choix de la config de strategie a appliquer (cf. STRATEGY_CONFIG) :
+      - TROT : Attele + Monte (meme regroupement que is_trot_discipline)
+      - HAIE : Haie + Steeple-chase + Cross
+      - PLAT : tout le reste (valeur par defaut)
+    Fonction dediee aux 2 sections de strategie -- n'affecte pas et ne
+    remplace pas is_trot_discipline (utilisee par le suivi/valuebet
+    existant, inchangee)."""
+    d = (discipline or "").strip().upper()
+    if d.startswith("TROT") or d.startswith("ATTELE") or d.startswith("MONTE"):
+        return "TROT"
+    if d.startswith("HAIE") or d.startswith("STEEPLE") or d.startswith("CROSS"):
+        return "HAIE"
+    return "PLAT"
+
 # on garde en memoire assez d'historique pour satisfaire la fenetre la plus longue
 HISTORY_RETENTION_S = max(SPEED_WINDOW_S, DELTA_WINDOW_S)
 
@@ -490,6 +550,8 @@ STATE = {
     "departTs": None,
     "rows": [],
     "updatedAt": None,
+    "strategyGagnant": None,  # pick unique Strategie Gagnante (num/nom/cotes) ou None -- cf. compute_strategy_picks
+    "strategyPlace": None,    # pick unique Strategie Placee (num/nom/cotes) ou None -- cf. compute_strategy_picks
 }
 
 # ---------------------------------------------------------------------------
@@ -965,6 +1027,7 @@ class Tracker:
         self.cote_t1 = {}         # num -> cote Gagnant (%) au moment du snapshot T0 (1ere cote vue pour ce cheval sur cette course)
         self.cote_live_last = {}  # num -> derniere cote Gagnant live connue (mise a jour a chaque poll) ; sert a capturer la "cote finale" au moment de la bascule de course
         self.odds_history = {}    # num -> [(t, prob_lissee_ema), ...]
+        self.strategy_odds_history = {}  # num -> [(t, cote_decimale_brute), ...] -- historique DEDIE, longue retention, pour les 2 sections de strategie (cf. STRATEGY_HISTORY_RETENTION_S) ; separe de odds_history ci-dessus, n'affecte rien d'existant
         self.ema_prob = {}        # num -> derniere probabilite implicite lissee (EMA)
         self.ema_last_t = {}      # num -> timestamp du dernier point utilise pour l'EMA
         self.bigmove_seen = {}    # num -> {"delta": ..., "at": ...} une fois le seuil relatif franchi (marquage definitif)
@@ -991,6 +1054,7 @@ class Tracker:
                 "horse_names": self.horse_names,
                 "cote_t1": self.cote_t1,
                 "odds_history": self.odds_history,
+                "strategy_odds_history": self.strategy_odds_history,
                 "ema_prob": self.ema_prob,
                 "ema_last_t": self.ema_last_t,
                 "bigmove_seen": self.bigmove_seen,
@@ -1041,6 +1105,7 @@ class Tracker:
         self.horse_names = snap.get("horse_names") or {}
         self.cote_t1 = snap.get("cote_t1") or {}
         self.odds_history = snap.get("odds_history") or {}
+        self.strategy_odds_history = snap.get("strategy_odds_history") or {}
         self.ema_prob = snap.get("ema_prob") or {}
         self.ema_last_t = snap.get("ema_last_t") or {}
         self.bigmove_seen = snap.get("bigmove_seen") or {}
@@ -1284,7 +1349,9 @@ class Tracker:
         self.valuebet_eval_done = False
         self.tracking_started_at = time.time()
         self.snapshot_taken = False
-        set_state(rows=[], snapLine=f"📸 Snapshot T1 ({self.snapshot_phrase()}) — en attente…")
+        self.strategy_odds_history = {}
+        set_state(rows=[], snapLine=f"📸 Snapshot T1 ({self.snapshot_phrase()}) — en attente…",
+                  strategyGagnant=None, strategyPlace=None)
 
     def refresh_programme_background(self):
         today = datetime.now(PARIS_TZ)
@@ -1473,6 +1540,90 @@ class Tracker:
             })
         return rows
 
+    def get_strategy_odds_at(self, num, target_t):
+        """Cote decimale BRUTE (pas de lissage EMA -- on veut la cote telle
+        quelle, comme demande) la plus proche de target_t, dans l'historique
+        dedie self.strategy_odds_history. Renvoie None si aucun point <=
+        target_t n'est encore disponible (fenetre pas encore atteinte, ou
+        historique pas encore assez profond pour ce cheval)."""
+        hist = self.strategy_odds_history.get(num)
+        if not hist:
+            return None
+        if hist[0][0] > target_t:
+            return None
+        best = None
+        for t, c in hist:
+            if t <= target_t:
+                best = c
+            else:
+                break
+        return best
+
+    def update_strategy_history(self, gagnant_map, now):
+        """Alimente self.strategy_odds_history (cote decimale BRUTE) avec
+        une retention longue (STRATEGY_HISTORY_RETENTION_S = 6 min) --
+        dediee UNIQUEMENT au calcul des 2 sections de strategie Gagnant/
+        Place (cf. compute_strategy_picks). N'affecte pas et ne lit pas
+        self.odds_history (retention courte 45s, utilise par le
+        suivi/vitesse/valuebet existants, inchange)."""
+        for num, info in gagnant_map.items():
+            cote = info.get("ratio")
+            if cote is None or cote <= 0:
+                continue
+            hist = self.strategy_odds_history.setdefault(num, [])
+            hist.append((now, cote))
+            while len(hist) > 1 and now - hist[0][0] > STRATEGY_HISTORY_RETENTION_S:
+                hist.pop(0)
+
+    def compute_strategy_pick(self, cfg, now):
+        """Calcule le cheval retenu pour UNE strategie (Gagnant OU Place) :
+        celui qui a la plus grosse chute de cote entre l'instant de DEBUT et
+        l'instant de FIN de la fenetre (cfg, relatifs a self.depart_ts),
+        parmi les chevaux dont la cote a l'instant de FIN ("cote d'arrivee")
+        tombe dans [cote_min, cote_max]. Renvoie None si la fenetre n'est
+        pas encore terminee ou si aucun cheval ne correspond au critere."""
+        if self.depart_ts is None:
+            return None
+        start_t = self.depart_ts + cfg["start_offset_s"]
+        end_t = self.depart_ts + cfg["end_offset_s"]
+        if now < end_t:
+            return None  # fenetre pas encore terminee -> pas encore de resultat possible
+
+        best = None
+        for num in self.favoris_order:
+            cote_debut = self.get_strategy_odds_at(num, start_t)
+            cote_fin = self.get_strategy_odds_at(num, end_t)
+            if cote_debut is None or cote_fin is None or cote_debut <= 0:
+                continue
+            if cote_fin < cfg["cote_min"] or cote_fin > cfg["cote_max"]:
+                continue
+            pct_chute = (cote_debut - cote_fin) / cote_debut * 100
+            if pct_chute <= 0:
+                continue  # il faut une vraie chute de cote (meme regle que le valuebet existant)
+            if best is None or pct_chute > best["pctChute"]:
+                best = {
+                    "num": num,
+                    "nom": self.horse_names.get(num, f"#{num}"),
+                    "coteDebut": cote_debut,
+                    "coteFin": cote_fin,
+                    "pctChute": pct_chute,
+                }
+        return best
+
+    def compute_strategy_picks(self, now):
+        """Calcule les 2 picks (Gagnant, Place) pour la course en cours,
+        selon la config de la discipline detectee (cf. STRATEGY_CONFIG,
+        classify_discipline). Purement additif : lecture seule de
+        self.strategy_odds_history / self.depart_ts / self.selected_discipline
+        / self.favoris_order / self.horse_names -- aucune ecriture d'etat
+        partagee avec le suivi existant."""
+        cfg = STRATEGY_CONFIG.get(classify_discipline(self.selected_discipline))
+        if not cfg:
+            return None, None
+        gagnant = self.compute_strategy_pick(cfg["gagnant"], now)
+        place = self.compute_strategy_pick(cfg["place"], now)
+        return gagnant, place
+
     def handle_odds(self, data):
         gagnant_map = self.parse_participants(data)
         nums = set(gagnant_map.keys())
@@ -1486,6 +1637,7 @@ class Tracker:
 
         now = time.time()
         speed_map = self.update_speed_history(gagnant_map)  # alimente aussi l'historique utilise ci-dessous (deja pendant le warm-up)
+        self.update_strategy_history(gagnant_map, now)  # historique dedie (longue retention) pour les 2 sections de strategie -- additif, n'affecte rien ci-dessus
 
         # -- capture (retardee) du snapshot T1 ---------------------------
         # Le snapshot T1 n'est plus fige des le tout premier poll, mais
@@ -1513,12 +1665,15 @@ class Tracker:
                     snap_msg = f"📸 Snapshot T1 ({self.snapshot_phrase()}) — dans {remaining_str}"
                 else:
                     snap_msg = f"📸 Snapshot T1 ({self.snapshot_phrase()}) — en attente de l'heure de depart…"
+                strategy_gagnant, strategy_place = self.compute_strategy_picks(now)
                 set_state(
                     rows=rows,
                     snapLine=snap_msg,
                     toteLabel=self.build_tote_label(len(nums)),
                     statusLine="",
                     updatedAt=time.time(),
+                    strategyGagnant=strategy_gagnant,
+                    strategyPlace=strategy_place,
                 )
                 self.maybe_save_snapshot()
                 return
@@ -1687,12 +1842,15 @@ class Tracker:
             })
 
         now_str = datetime.now(PARIS_TZ).strftime("%H:%M:%S")
+        strategy_gagnant, strategy_place = self.compute_strategy_picks(now)
         set_state(
             rows=rows,
             snapLine=f"📡 Rapports probables mis a jour — {now_str}",
             toteLabel=self.build_tote_label(len(nums)),
             statusLine="",
             updatedAt=time.time(),
+            strategyGagnant=strategy_gagnant,
+            strategyPlace=strategy_place,
         )
         self.maybe_save_snapshot()
 
