@@ -758,81 +758,94 @@ def log_odds_timeseries_async(date_str, reunion, course, label,
                      if depart_ms else None)
 
     def worker():
-        # Rapports (definitifs, avec repli provisoires + boucle de reessai
-        # -- les rapports definitifs ne sont presque jamais prets
-        # instantanement, il faut laisser du temps a PMU).
-        rapports = None
-        last_rapports_err = None
-        for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
-            try:
-                rapports = fetch_rapports_definitifs(date_str, reunion, course)
-                if rapports:
-                    break
-            except Exception as e:
-                last_rapports_err = e
-            time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
-        if rapports is None:
-            try:
-                rapports = fetch_rapports_provisoires(date_str, reunion, course)
-            except Exception as e:
-                last_rapports_err = e
-        if rapports is None:
-            print(f"[ODDS-TS-LOG] {label} : rapports indisponibles apres "
-                  f"{RAPPORTS_FETCH_ATTEMPTS} tentatives (+ repli provisoires echoue). "
-                  f"Derniere erreur : {last_rapports_err!r}")
-
-        # Rang de cote dans le peloton complet (1 = favori officiel de la
-        # course = cote finale la plus basse), calcule a partir de la
-        # derniere cote connue de chaque cheval (dernier sample).
-        cote_finale_par_num = {num: samples[-1]["coteInstant"] for num, samples in timeseries_buffer.items() if samples}
-        ranked = sorted(cote_finale_par_num.items(), key=lambda kv: kv[1])
-        rang_par_num = {num: i + 1 for i, (num, _) in enumerate(ranked)}
-
-        horses = []
-        for num, samples in timeseries_buffer.items():
-            if not samples:
-                continue
-            horses.append({
-                "num": num,
-                "nom": horse_names.get(num, f"#{num}"),
-                "coteFinale": cote_finale_par_num.get(num),
-                "rangCoteFinale": rang_par_num.get(num),  # 1 = favori officiel de la course
-                "rapportSimpleGagnant": extract_dividende(rapports, num, "GAGNANT"),
-                "rapportSimplePlace": extract_dividende(rapports, num, "PLACE"),
-                "samples": samples,  # [{"t":..., "coteInstant":...}, ...]
-            })
-
-        entry = {
-            "loggedAt": time.time(),
-            "date": date_str,
-            "label": label,
-            "hippodrome": hippodrome,
-            "discipline": discipline,
-            "nbPartants": nb_partants,
-            "heureDepart": heure_depart,
-            "sampleIntervalS": ODDS_TIMESERIES_SAMPLE_INTERVAL_S,
-            "windowBeforeS": ODDS_TIMESERIES_WINDOW_BEFORE_S,
-            "windowAfterS": ODDS_TIMESERIES_WINDOW_AFTER_S,
-            "horses": horses,
-            # BUG CORRIGE : contrairement au journal valuebet (qui garde
-            # toujours les rapports PMU bruts en secours), ce journal ne
-            # conservait QUE le resultat de extract_dividende -- si
-            # l'extraction echouait (rapports jamais publies par PMU,
-            # enquete des commissaires, format de reponse imprevu...), le
-            # rapportSimpleGagnant/rapportSimplePlace restait vide POUR
-            # TOUJOURS, sans aucun moyen de retrouver l'info a la main.
-            # On garde desormais le JSON brut (ou null si jamais obtenu),
-            # expose en secours dans le CSV (colonne rapportsRawJson).
-            "rapports": rapports,
-        }
+        # BUG CORRIGE : comme pour log_race_strategy_picks_async (cf. son
+        # propre commentaire "BUG CORRIGE"), seule l'ecriture finale du
+        # fichier etait protegee par un try/except. Si une exception
+        # inattendue survenait AVANT (fetch des rapports, calcul du rang de
+        # cote, construction de la liste `horses`...) -- par ex. un format
+        # de payload PMU jamais rencontre pour une course/discipline
+        # particuliere -- le thread worker() plantait silencieusement, sans
+        # AUCUN message dans les logs : le journal odds_timeseries.jsonl
+        # cessait alors de recevoir de nouvelles lignes, sans la moindre
+        # trace de ce qui s'etait passe (exactement le symptome observe :
+        # aucune ligne [ODDS-TS-LOG] dans les logs depuis plusieurs
+        # courses). Desormais TOUT le corps du worker est protege par un
+        # try/except qui logue systematiquement l'erreur.
         try:
+            # Rapports (definitifs, avec repli provisoires + boucle de reessai
+            # -- les rapports definitifs ne sont presque jamais prets
+            # instantanement, il faut laisser du temps a PMU).
+            rapports = None
+            last_rapports_err = None
+            for attempt in range(1, RAPPORTS_FETCH_ATTEMPTS + 1):
+                try:
+                    rapports = fetch_rapports_definitifs(date_str, reunion, course)
+                    if rapports:
+                        break
+                except Exception as e:
+                    last_rapports_err = e
+                time.sleep(RAPPORTS_FETCH_RETRY_DELAY_S)
+            if rapports is None:
+                try:
+                    rapports = fetch_rapports_provisoires(date_str, reunion, course)
+                except Exception as e:
+                    last_rapports_err = e
+            if rapports is None:
+                print(f"[ODDS-TS-LOG] {label} : rapports indisponibles apres "
+                      f"{RAPPORTS_FETCH_ATTEMPTS} tentatives (+ repli provisoires echoue). "
+                      f"Derniere erreur : {last_rapports_err!r}")
+
+            # Rang de cote dans le peloton complet (1 = favori officiel de la
+            # course = cote finale la plus basse), calcule a partir de la
+            # derniere cote connue de chaque cheval (dernier sample).
+            cote_finale_par_num = {num: samples[-1]["coteInstant"] for num, samples in timeseries_buffer.items() if samples}
+            ranked = sorted(cote_finale_par_num.items(), key=lambda kv: kv[1])
+            rang_par_num = {num: i + 1 for i, (num, _) in enumerate(ranked)}
+
+            horses = []
+            for num, samples in timeseries_buffer.items():
+                if not samples:
+                    continue
+                horses.append({
+                    "num": num,
+                    "nom": horse_names.get(num, f"#{num}"),
+                    "coteFinale": cote_finale_par_num.get(num),
+                    "rangCoteFinale": rang_par_num.get(num),  # 1 = favori officiel de la course
+                    "rapportSimpleGagnant": extract_dividende(rapports, num, "GAGNANT"),
+                    "rapportSimplePlace": extract_dividende(rapports, num, "PLACE"),
+                    "samples": samples,  # [{"t":..., "coteInstant":...}, ...]
+                })
+
+            entry = {
+                "loggedAt": time.time(),
+                "date": date_str,
+                "label": label,
+                "hippodrome": hippodrome,
+                "discipline": discipline,
+                "nbPartants": nb_partants,
+                "heureDepart": heure_depart,
+                "sampleIntervalS": ODDS_TIMESERIES_SAMPLE_INTERVAL_S,
+                "windowBeforeS": ODDS_TIMESERIES_WINDOW_BEFORE_S,
+                "windowAfterS": ODDS_TIMESERIES_WINDOW_AFTER_S,
+                "horses": horses,
+                # BUG CORRIGE : contrairement au journal valuebet (qui garde
+                # toujours les rapports PMU bruts en secours), ce journal ne
+                # conservait QUE le resultat de extract_dividende -- si
+                # l'extraction echouait (rapports jamais publies par PMU,
+                # enquete des commissaires, format de reponse imprevu...), le
+                # rapportSimpleGagnant/rapportSimplePlace restait vide POUR
+                # TOUJOURS, sans aucun moyen de retrouver l'info a la main.
+                # On garde desormais le JSON brut (ou null si jamais obtenu),
+                # expose en secours dans le CSV (colonne rapportsRawJson).
+                "rapports": rapports,
+            }
             with ODDS_TIMESERIES_LOG_LOCK:
                 with open(ODDS_TIMESERIES_LOG_FILE, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             print(f"[ODDS-TS-LOG] {label} : {len(horses)} cheval(aux), "
                   f"{sum(len(h['samples']) for h in horses)} points au total")
         except Exception as e:
-            print(f"[ODDS-TS-LOG] echec ecriture journal : {e}")
+            print(f"[ODDS-TS-LOG] {label} : ECHEC INATTENDU du worker (rien ecrit) : {e!r}")
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -904,13 +917,25 @@ class LookaheadOddsLogger:
         state = self.active.pop(key, None)
         if state is None:
             return
+        reunion, course = key
+        label = f"R{reunion}C{course}"
+        # LOG DE DIAGNOSTIC (meme esprit que celui de select_next_course
+        # pour valuebet_log) : confirme systematiquement, a chaque flush,
+        # si des donnees ont ete accumulees ou non -- pour ne plus jamais
+        # se retrouver a devoir deviner si le probleme vient du polling
+        # (buffer vide) ou du worker d'ecriture (cf. son propre correctif
+        # try/except ci-dessus).
         if state["buffer"]:
-            reunion, course = key
-            label = f"R{reunion}C{course}"
+            nb_chevaux = len(state["buffer"])
+            nb_points = sum(len(s) for s in state["buffer"].values())
+            print(f"[ODDS-TS-LOG] {label} : flush -> {nb_chevaux} cheval(aux), "
+                  f"{nb_points} points accumules, ecriture en tache de fond lancee")
             date_str = date_pmu(datetime.now(PARIS_TZ))
             log_odds_timeseries_async(date_str, reunion, course, label,
                                        dict(state["buffer"]), dict(state["horse_names"]),
                                        state["course_info"])
+        else:
+            print(f"[ODDS-TS-LOG] {label} : flush -> buffer vide, rien a ecrire")
         self.flushed_keys.add(key)
 
     def poll_once(self):
