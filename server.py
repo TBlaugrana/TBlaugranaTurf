@@ -603,6 +603,23 @@ HEALTH = {
     "lookahead_last_ok_ts": None,
     "lookahead_last_error": None,
     "lookahead_active_courses": 0,
+    # --- Diagnostic fin ajoute suite a l'incident "odds_timeseries.jsonl ne
+    # se remplit plus alors que /api/health affiche tout au vert" : l'ancien
+    # health ne prouvait que "poll_once() n'a pas leve d'exception", pas que
+    # des donnees etaient reellement collectees ET ecrites sur disque. Ces
+    # champs rendent chaque etape (fetch PMU -> buffer -> flush -> ecriture
+    # fichier) observable independamment, sans avoir a fouiller les logs.
+    "lookahead_last_sample_ts": None,       # dernier instant ou au moins 1 cote a ete ajoutee a un buffer
+    "lookahead_total_samples": 0,           # compteur cumule (depuis le demarrage du process) d'echantillons ajoutes
+    "lookahead_last_empty_fetch_ts": None,  # dernier instant ou un fetch PMU a reussi mais renvoye 0 cheval exploitable
+    "lookahead_consecutive_empty_fetches": 0,
+    "lookahead_last_flush_ts": None,
+    "lookahead_last_flush_label": None,
+    "lookahead_last_flush_chevaux": None,
+    "lookahead_last_flush_points": None,
+    "lookahead_last_write_ok_ts": None,      # derniere ecriture REUSSIE dans odds_timeseries.jsonl
+    "lookahead_last_write_label": None,
+    "lookahead_last_write_error": None,      # derniere erreur du worker d'ecriture (label + exception)
 }
 
 
@@ -844,8 +861,13 @@ def log_odds_timeseries_async(date_str, reunion, course, label,
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             print(f"[ODDS-TS-LOG] {label} : {len(horses)} cheval(aux), "
                   f"{sum(len(h['samples']) for h in horses)} points au total")
+            HEALTH["lookahead_last_write_ok_ts"] = time.time()
+            HEALTH["lookahead_last_write_label"] = label
+            HEALTH["lookahead_last_write_error"] = None
         except Exception as e:
             print(f"[ODDS-TS-LOG] {label} : ECHEC INATTENDU du worker (rien ecrit) : {e!r}")
+            HEALTH["lookahead_last_write_error"] = f"{label} : {e!r}"
+            HEALTH["lookahead_last_write_label"] = label
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -925,17 +947,23 @@ class LookaheadOddsLogger:
         # se retrouver a devoir deviner si le probleme vient du polling
         # (buffer vide) ou du worker d'ecriture (cf. son propre correctif
         # try/except ci-dessus).
+        HEALTH["lookahead_last_flush_ts"] = time.time()
+        HEALTH["lookahead_last_flush_label"] = label
         if state["buffer"]:
             nb_chevaux = len(state["buffer"])
             nb_points = sum(len(s) for s in state["buffer"].values())
             print(f"[ODDS-TS-LOG] {label} : flush -> {nb_chevaux} cheval(aux), "
                   f"{nb_points} points accumules, ecriture en tache de fond lancee")
+            HEALTH["lookahead_last_flush_chevaux"] = nb_chevaux
+            HEALTH["lookahead_last_flush_points"] = nb_points
             date_str = date_pmu(datetime.now(PARIS_TZ))
             log_odds_timeseries_async(date_str, reunion, course, label,
                                        dict(state["buffer"]), dict(state["horse_names"]),
                                        state["course_info"])
         else:
             print(f"[ODDS-TS-LOG] {label} : flush -> buffer vide, rien a ecrire")
+            HEALTH["lookahead_last_flush_chevaux"] = 0
+            HEALTH["lookahead_last_flush_points"] = 0
         self.flushed_keys.add(key)
 
     def poll_once(self):
@@ -1031,7 +1059,16 @@ class LookaheadOddsLogger:
 
         gagnant_map = parse_participants_data(data)
         if not gagnant_map:
+            # Le fetch PMU a REUSSI (pas d'exception, HTTP 200) mais n'a
+            # renvoye aucun cheval exploitable (statut != PARTANT ou
+            # dernierRapportDirect absent pour tous). C'est exactement le
+            # cas qui restait invisible dans l'ancien /api/health : la
+            # boucle continue de tourner "sans erreur" indefiniment sans
+            # jamais rien accumuler. Trace desormais explicitement.
+            HEALTH["lookahead_last_empty_fetch_ts"] = time.time()
+            HEALTH["lookahead_consecutive_empty_fetches"] += 1
             return
+        HEALTH["lookahead_consecutive_empty_fetches"] = 0
         for num, info in gagnant_map.items():
             state["horse_names"][num] = info["nom"]
 
@@ -1040,6 +1077,7 @@ class LookaheadOddsLogger:
             return
         state["last_sample_ts"] = now
 
+        appended = 0
         for num, info in gagnant_map.items():
             cote_instant = info.get("ratio")
             if cote_instant is None:
@@ -1048,6 +1086,10 @@ class LookaheadOddsLogger:
                 "t": now,
                 "coteInstant": cote_instant,
             })
+            appended += 1
+        if appended:
+            HEALTH["lookahead_last_sample_ts"] = now
+            HEALTH["lookahead_total_samples"] += appended
 
     def run_forever(self):
         while True:
@@ -2068,6 +2110,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "derniersSuccesIl_y_a_s": (round(now - lookahead_ts, 1) if lookahead_ts else None),
                 "derniereErreur": HEALTH.get("lookahead_last_error"),
                 "coursesSuiviesEnAvanceActuellement": HEALTH.get("lookahead_active_courses", 0),
+                # Diagnostic fin (cf. commentaire sur HEALTH) : permet de voir
+                # EXACTEMENT a quelle etape ca coince si le CSV ne se remplit
+                # plus, sans devoir fouiller les logs Railway.
+                "dernierEchantillonAjouteIl_y_a_s": (
+                    round(now - HEALTH["lookahead_last_sample_ts"], 1)
+                    if HEALTH.get("lookahead_last_sample_ts") else None),
+                "totalEchantillonsDepuisDemarrage": HEALTH.get("lookahead_total_samples", 0),
+                "dernierFetchVideIl_y_a_s": (
+                    round(now - HEALTH["lookahead_last_empty_fetch_ts"], 1)
+                    if HEALTH.get("lookahead_last_empty_fetch_ts") else None),
+                "fetchsVidesConsecutifs": HEALTH.get("lookahead_consecutive_empty_fetches", 0),
+                "dernierFlush": {
+                    "il_y_a_s": (round(now - HEALTH["lookahead_last_flush_ts"], 1)
+                                 if HEALTH.get("lookahead_last_flush_ts") else None),
+                    "label": HEALTH.get("lookahead_last_flush_label"),
+                    "chevaux": HEALTH.get("lookahead_last_flush_chevaux"),
+                    "points": HEALTH.get("lookahead_last_flush_points"),
+                },
+                "derniereEcritureReussieIl_y_a_s": (
+                    round(now - HEALTH["lookahead_last_write_ok_ts"], 1)
+                    if HEALTH.get("lookahead_last_write_ok_ts") else None),
+                "derniereEcritureLabel": HEALTH.get("lookahead_last_write_label"),
+                "derniereErreurEcriture": HEALTH.get("lookahead_last_write_error"),
             },
         }
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
