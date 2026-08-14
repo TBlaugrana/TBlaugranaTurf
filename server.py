@@ -931,15 +931,37 @@ class LookaheadOddsLogger:
 
     def __init__(self, tracker):
         self.tracker = tracker
-        # cle (reunion, course) -> {"buffer":..., "horse_names":..., "last_sample_ts":..., "course_info":...}
+        # cle (date_str, reunion, course) -> {"buffer":..., "horse_names":..., "last_sample_ts":..., "course_info":...}
+        #
+        # BUG CORRIGE (incident "plus aucune ligne dans odds_timeseries.jsonl
+        # depuis ~10h alors que /api/health etait vert") : la cle utilisee
+        # ici -- et donc dans flushed_keys -- etait auparavant (reunion,
+        # course) SANS la date. Or numReunion/numOrdre sont reattribues
+        # CHAQUE JOUR par PMU (il y a un "R1C1" tous les jours). Des qu'une
+        # combinaison avait ete flushee une fois, elle restait bloquee dans
+        # flushed_keys POUR TOUJOURS (le process ne redemarre jamais entre
+        # deux jours de courses) : le lendemain, la meme course R1C1 etait
+        # vue comme "deja loggee" et jamais reprise. Au bout de quelques
+        # jours, la quasi-totalite des combinaisons (reunion, course)
+        # plausibles avaient fini par etre "grillees", d'ou l'arret quasi
+        # total observe. La date fait desormais partie de la cle : chaque
+        # jour genere des cles totalement nouvelles.
         self.active = {}
-        self.flushed_keys = set()        # eviter de logguer deux fois la meme course
+        self.flushed_keys = set()        # eviter de logguer deux fois la meme course (meme jour)
+
+    def _prune_old_flushed_keys(self, today_str):
+        """Retire de flushed_keys les entrees d'un autre jour que
+        aujourd'hui, pour eviter une croissance illimitee de ce set au fil
+        des mois (le process tourne en continu, sans redemarrage quotidien)."""
+        stale = {k for k in self.flushed_keys if k[0] != today_str}
+        if stale:
+            self.flushed_keys -= stale
 
     def flush(self, key):
         state = self.active.pop(key, None)
         if state is None:
             return
-        reunion, course = key
+        date_str, reunion, course = key
         label = f"R{reunion}C{course}"
         # LOG DE DIAGNOSTIC (meme esprit que celui de select_next_course
         # pour valuebet_log) : confirme systematiquement, a chaque flush,
@@ -956,7 +978,6 @@ class LookaheadOddsLogger:
                   f"{nb_points} points accumules, ecriture en tache de fond lancee")
             HEALTH["lookahead_last_flush_chevaux"] = nb_chevaux
             HEALTH["lookahead_last_flush_points"] = nb_points
-            date_str = date_pmu(datetime.now(PARIS_TZ))
             log_odds_timeseries_async(date_str, reunion, course, label,
                                        dict(state["buffer"]), dict(state["horse_names"]),
                                        state["course_info"])
@@ -991,8 +1012,10 @@ class LookaheadOddsLogger:
         # nouveau dans la fenetre -- aucune donnee deja accumulee n'est
         # perdue.
         now = time.time()
+        today_str = date_pmu(datetime.now(PARIS_TZ))
+        self._prune_old_flushed_keys(today_str)
         all_by_key = {
-            (c["numReunion"], c["course"]): c
+            (today_str, c["numReunion"], c["course"]): c
             for c in self.tracker.all_courses
             if c.get("depart")
         }
@@ -1047,8 +1070,7 @@ class LookaheadOddsLogger:
             self._poll_one(key, state)
 
     def _poll_one(self, key, state):
-        reunion, course = key
-        date_str = date_pmu(datetime.now(PARIS_TZ))
+        date_str, reunion, course = key
         path = (f"{PMU_CIT_PREFIX}programme/{date_str}/R{reunion}/C{course}"
                 f"/participants?specialisation=OFFLINE")
         try:
