@@ -165,15 +165,18 @@ def is_trot_discipline(discipline):
 
 # ---------------------------------------------------------------------------
 # Strategies "Gagnant" / "Place" affichees sur la page (2 sections empilees,
-# une par type de pari). Un seul cheval retenu par strategie : celui qui a
-# la PLUS GROSSE CHUTE DE COTE (cote decimale brute -- meme definition que
-# pct_chute existant plus bas dans handle_odds : (cote_debut - cote_fin) /
-# cote_debut * 100) entre un instant de DEBUT et un instant de FIN, tous
-# deux fixes relativement a l'heure de depart PROGRAMMEE (self.depart_ts),
-# parmi les chevaux dont la cote a l'instant de FIN ("cote d'arrivee")
-# tombe dans [cote_min, cote_max]. Si aucun cheval ne correspond (ou si la
-# fenetre n'est pas encore terminee), rien n'est renvoye et le client
-# affiche "Aucun cheval ne correspond au critere pour le moment.".
+# une par type de pari). Par defaut, un seul cheval est retenu par
+# strategie : celui qui a la PLUS GROSSE CHUTE DE COTE (cote decimale brute
+# -- meme definition que pct_chute existant plus bas dans handle_odds :
+# (cote_debut - cote_fin) / cote_debut * 100) entre un instant de DEBUT et
+# un instant de FIN, tous deux fixes relativement a l'heure de depart
+# PROGRAMMEE (self.depart_ts), parmi les chevaux dont la cote a l'instant
+# de FIN ("cote d'arrivee") tombe dans [cote_min, cote_max]. Certaines
+# strategies (cf. cfg["multi"] dans STRATEGY_CONFIG) retiennent au
+# contraire TOUS les chevaux qui correspondent au critere, pas seulement
+# le meilleur. Si aucun cheval ne correspond (ou si la fenetre n'est pas
+# encore terminee), rien n'est renvoye et le client affiche "Aucun cheval
+# ne correspond au critere pour le moment.".
 #
 # Fonctionnalite ENTIEREMENT ADDITIVE : calcule a partir d'un historique de
 # cotes DEDIE (self.strategy_odds_history, cf. update_strategy_history),
@@ -188,20 +191,35 @@ def is_trot_discipline(discipline):
 #   TROT : Attele + Monte
 #   HAIE : Haie + Steeple-chase + Cross
 # ---------------------------------------------------------------------------
-STRATEGY_HISTORY_RETENTION_S = 6 * 60  # 6 min : couvre la fenetre la plus large (Trot Gagnant : T-5min a T-2min)
+STRATEGY_HISTORY_RETENTION_S = 6 * 60  # 6 min : couvre largement la fenetre la plus longue actuelle (TROT place : T-2min30 a T+30s -> 3min)
 
+# Champs de chaque config de strategie :
+#   start_offset_s / end_offset_s : instants de DEBUT / FIN de fenetre, en
+#       secondes relatives au depart programme (negatif = avant le depart,
+#       positif = apres). start_offset_s doit toujours etre CHRONOLOGIQUEMENT
+#       avant end_offset_s (valeur plus petite).
+#   cote_min / cote_max : plage de cote LIVE (a l'instant de FIN) acceptee.
+#   min_pct_chute : chute minimale (en %) exigee entre cote de debut et cote
+#       de fin pour qu'un cheval soit eligible. None -> comportement par
+#       defaut (il faut une chute STRICTE, pct_chute > 0). Une valeur
+#       numerique (ex: 0) est INCLUSIVE (pct_chute >= valeur) -- utile pour
+#       accepter une cote stable (0%) ou exiger un seuil plus eleve (15%).
+#   multi : si True, TOUS les chevaux qui remplissent les criteres sont
+#       retenus (liste), au lieu du seul cheval a la plus grosse chute.
 STRATEGY_CONFIG = {
     "PLAT": {
-        "gagnant": {"start_offset_s": -30,  "end_offset_s": 0,   "cote_min": 6,  "cote_max": 10},
-        "place":   {"start_offset_s": -90,  "end_offset_s": 30,  "cote_min": 1,  "cote_max": 100},
+        "gagnant": {"start_offset_s": -180, "end_offset_s": -90,  "cote_min": 6,  "cote_max": 10,
+                    "min_pct_chute": 0, "multi": True},
+        "place":   {"start_offset_s": 30,   "end_offset_s": 120,  "cote_min": 1,  "cote_max": 100},
     },
     "TROT": {
-        "gagnant": {"start_offset_s": -300, "end_offset_s": -120, "cote_min": 1, "cote_max": 6},
-        "place":   {"start_offset_s": 0,    "end_offset_s": 30,   "cote_min": 1, "cote_max": 10},
+        "gagnant": {"start_offset_s": -120, "end_offset_s": -60,  "cote_min": 3, "cote_max": 6},
+        "place":   {"start_offset_s": -150, "end_offset_s": 30,   "cote_min": 1, "cote_max": 10,
+                    "min_pct_chute": 15},
     },
     "HAIE": {
-        "gagnant": {"start_offset_s": -60,  "end_offset_s": 30,  "cote_min": 6, "cote_max": 10},
-        "place":   {"start_offset_s": -150, "end_offset_s": 30,  "cote_min": 1, "cote_max": 6},
+        "gagnant": {"start_offset_s": -270, "end_offset_s": -150, "cote_min": 1, "cote_max": 10},
+        "place":   {"start_offset_s": -270, "end_offset_s": -150, "cote_min": 1, "cote_max": 10},
     },
 }
 
@@ -1460,9 +1478,9 @@ class Tracker:
             prev_gagnant, prev_place = self.compute_strategy_picks(time.time())
             prev_picks = []
             if prev_gagnant:
-                prev_picks.append(("gagnant", prev_gagnant))
+                prev_picks.extend(("gagnant", p) for p in prev_gagnant)
             if prev_place:
-                prev_picks.append(("place", prev_place))
+                prev_picks.extend(("place", p) for p in prev_place)
             # LOG DE DIAGNOSTIC (ajoute pour comprendre pourquoi le CSV
             # valuebet_log.csv restait vide) : indique systematiquement, a
             # CHAQUE bascule de course, si une strategie a trouve un cheval
@@ -1740,12 +1758,21 @@ class Tracker:
                 hist.pop(0)
 
     def compute_strategy_pick(self, cfg, now):
-        """Calcule le cheval retenu pour UNE strategie (Gagnant OU Place) :
-        celui qui a la plus grosse chute de cote entre l'instant de DEBUT et
-        l'instant de FIN de la fenetre (cfg, relatifs a self.depart_ts),
-        parmi les chevaux dont la cote a l'instant de FIN ("cote d'arrivee")
-        tombe dans [cote_min, cote_max]. Renvoie None si la fenetre n'est
-        pas encore terminee ou si aucun cheval ne correspond au critere."""
+        """Calcule le(s) cheval(aux) retenu(s) pour UNE strategie (Gagnant
+        OU Place), entre l'instant de DEBUT et l'instant de FIN de la
+        fenetre (cfg, relatifs a self.depart_ts), parmi les chevaux dont la
+        cote a l'instant de FIN ("cote d'arrivee") tombe dans [cote_min,
+        cote_max] et dont la chute (cote_debut -> cote_fin) respecte
+        cfg["min_pct_chute"] (cf. STRATEGY_CONFIG pour la semantique exacte).
+
+        Si cfg["multi"] est True : renvoie la liste de TOUS les chevaux
+        eligibles, triee par chute decroissante (plus grosse chute en
+        premier). Sinon (comportement historique) : renvoie une liste
+        contenant AU PLUS 1 element, celui qui a la plus grosse chute.
+
+        Renvoie None si la fenetre n'est pas encore terminee (pas encore de
+        resultat possible). Renvoie une liste (eventuellement vide, si la
+        fenetre est terminee mais qu'aucun cheval ne correspond) sinon."""
         if self.depart_ts is None:
             return None
         start_t = self.depart_ts + cfg["start_offset_s"]
@@ -1753,7 +1780,10 @@ class Tracker:
         if now < end_t:
             return None  # fenetre pas encore terminee -> pas encore de resultat possible
 
-        best = None
+        min_pct_chute = cfg.get("min_pct_chute")
+        multi = cfg.get("multi", False)
+
+        matches = []
         for num in self.favoris_order:
             cote_debut = self.get_strategy_odds_at(num, start_t)
             cote_fin = self.get_strategy_odds_at(num, end_t)
@@ -1762,30 +1792,40 @@ class Tracker:
             if cote_fin < cfg["cote_min"] or cote_fin > cfg["cote_max"]:
                 continue
             pct_chute = (cote_debut - cote_fin) / cote_debut * 100
-            if pct_chute <= 0:
-                continue  # il faut une vraie chute de cote (meme regle que le valuebet existant)
-            if best is None or pct_chute > best["pctChute"]:
-                best = {
-                    "num": num,
-                    "nom": self.horse_names.get(num, f"#{num}"),
-                    "coteDebut": cote_debut,
-                    "coteFin": cote_fin,
-                    "pctChute": pct_chute,
-                }
-        return best
+            if min_pct_chute is None:
+                if pct_chute <= 0:
+                    continue  # comportement par defaut : il faut une vraie chute (>0)
+            else:
+                if pct_chute < min_pct_chute:
+                    continue  # seuil explicite (INCLUSIF, ex: >=0 ou >=15)
+            matches.append({
+                "num": num,
+                "nom": self.horse_names.get(num, f"#{num}"),
+                "coteDebut": cote_debut,
+                "coteFin": cote_fin,
+                "pctChute": pct_chute,
+            })
+
+        matches.sort(key=lambda m: m["pctChute"], reverse=True)
+        if multi:
+            return matches
+        return matches[:1]
 
     def compute_strategy_picks(self, now):
-        """Calcule les 2 picks (Gagnant, Place) pour la course en cours,
+        """Calcule les 2 sections (Gagnant, Place) pour la course en cours,
         selon la config de la discipline detectee (cf. STRATEGY_CONFIG,
-        classify_discipline). Chaque pick est FIGE des qu'il est trouve une
-        premiere fois (cf. self.strategy_picks_frozen) et renvoye tel quel
-        pour le reste de la course, meme si self.strategy_odds_history finit
-        par purger (retention glissante, STRATEGY_HISTORY_RETENTION_S) le
-        point de debut de fenetre necessaire au recalcul -- sans ca, un
-        cheval valide pouvait "disparaitre" plus tard alors qu'il avait deja
-        rempli le critere. Lecture/ecriture limitees a self.strategy_picks_frozen
-        (proprement remis a zero par course dans start_tracking) -- n'affecte
-        pas le suivi existant."""
+        classify_discipline). Chaque section est une LISTE de picks
+        (eventuellement vide, ou None si la fenetre n'est pas terminee) --
+        cf. compute_strategy_pick. La liste est FIGEE des qu'elle est
+        calculee une premiere fois (cf. self.strategy_picks_frozen) et
+        renvoyee telle quelle pour le reste de la course, meme si
+        self.strategy_odds_history finit par purger (retention glissante,
+        STRATEGY_HISTORY_RETENTION_S) le point de debut de fenetre
+        necessaire au recalcul -- sans ca, un cheval valide pouvait
+        "disparaitre" plus tard alors qu'il avait deja rempli le critere.
+        Lecture/ecriture limitees a self.strategy_picks_frozen (proprement
+        remis a zero par course dans start_tracking) -- n'affecte pas le
+        suivi existant."""
         cfg = STRATEGY_CONFIG.get(classify_discipline(self.selected_discipline))
         if not cfg:
             return None, None
