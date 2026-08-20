@@ -615,26 +615,24 @@ function rangFavori(rang){
 // affiché pour le moment, comme demandé).
 function renderTable(rows){
   lastRows = rows || [];
-  // -> ici viendra la logique de sélection (1 cheval Gagnant + 1 cheval
-  //    Placé par course, selon la discipline détectée) une fois les
-  //    critères fournis. Pour l'instant, on ne touche pas à l'affichage
-  //    des 2 sections (reste sur "En attente des critères de sélection…").
+  // La sélection Gagnant/Placé (1 ou plusieurs chevaux par course, selon la
+  // discipline détectée) est calculée côté serveur -- cf. renderPick(),
+  // alimentée par data.strategyGagnant / data.strategyPlace.
 }
 
-// Affiche le cheval retenu par une strategie (venant de data.strategyGagnant
-// / data.strategyPlace, calcules cote serveur -- cf. compute_strategy_picks
-// dans server.py) dans le conteneur donne, ou le message d'attente si le
-// serveur n'a rien renvoye (fenetre pas encore terminee ou aucun cheval ne
-// correspond au critere).
-function renderPick(containerEl, pick){
-  if(!pick){
-    containerEl.innerHTML = '<div class="empty">Aucun cheval ne correspond au critère pour le moment.</div>';
-    return;
-  }
+// Affiche le(s) cheval(aux) retenu(s) par une strategie (venant de
+// data.strategyGagnant / data.strategyPlace, calcules cote serveur -- cf.
+// compute_strategy_picks dans server.py) dans le conteneur donne. Le
+// serveur renvoie desormais toujours une LISTE (potentiellement vide, ou
+// null si la fenetre n'est pas encore terminee) : la plupart des strategies
+// ne contiennent qu'un seul element (le meilleur), certaines (cf. "multi"
+// cote serveur, ex: PLAT Gagnant) peuvent en contenir plusieurs -> on les
+// affiche alors empiles, un pick-card par cheval.
+function pickCardHtml(pick){
   const coteFinStr = (pick.coteFin !== null && pick.coteFin !== undefined) ? pick.coteFin.toFixed(1) : '—';
   const coteDebutStr = (pick.coteDebut !== null && pick.coteDebut !== undefined) ? pick.coteDebut.toFixed(1) : '—';
   const pctStr = (pick.pctChute !== null && pick.pctChute !== undefined) ? `-${pick.pctChute.toFixed(1)}%` : '—';
-  containerEl.innerHTML = `
+  return `
     <div class="pick-card">
       <span class="num-badge">${pick.num}</span>
       <div class="pick-info">
@@ -644,6 +642,14 @@ function renderPick(containerEl, pick){
       <div class="pick-chute">${pctStr}</div>
     </div>
   `;
+}
+
+function renderPick(containerEl, picks){
+  if(!picks || picks.length === 0){
+    containerEl.innerHTML = '<div class="empty">Aucun cheval ne correspond au critère pour le moment.</div>';
+    return;
+  }
+  containerEl.innerHTML = picks.map(pickCardHtml).join('');
 }
 
 function applyState(data){
