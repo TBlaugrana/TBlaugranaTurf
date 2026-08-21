@@ -645,9 +645,10 @@ function pickCardHtml(pick){
   const coteFinStr = (pick.coteFin !== null && pick.coteFin !== undefined) ? pick.coteFin.toFixed(1) : '—';
   const coteDebutStr = (pick.coteDebut !== null && pick.coteDebut !== undefined) ? pick.coteDebut.toFixed(1) : '—';
   const pctStr = (pick.pctChute !== null && pick.pctChute !== undefined) ? `-${pick.pctChute.toFixed(1)}%` : '—';
-  // pick.label : present uniquement pour le Placé PLAT (2 sous-stratégies
-  // "Place 1" / "Place 2" indépendantes et live, cf. server.py). Absent
-  // (undefined) pour les autres sections/disciplines -> pas de badge affiché.
+  // pick.label : present pour le Placé PLAT, TROT et HAIE (chacun decoupe
+  // en plusieurs sous-stratégies "Place 1" / "Place 2" / ... indépendantes
+  // et live, cf. STRATEGY_CONFIG dans server.py). Absent (undefined) pour
+  // la strategie Gagnant -> pas de badge affiché dans ce cas.
   const labelHtml = pick.label ? `<div class="pick-label">${pick.label}</div>` : '';
   return `
     <div class="pick-card">
