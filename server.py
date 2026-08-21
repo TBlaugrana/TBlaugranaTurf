@@ -279,7 +279,24 @@ STRATEGY_CONFIG = {
     },
     "HAIE": {
         "gagnant": {"start_offset_s": -270, "end_offset_s": -150, "cote_min": 1, "cote_max": 10},
-        "place":   {"start_offset_s": -270, "end_offset_s": -150, "cote_min": 1, "cote_max": 10},
+        # Placé HAIE : 2 sous-strategies INDEPENDANTES et LIVE (meme
+        # fonctionnement "type": "live_multi" que le Placé PLAT / Trot
+        # Place 1+2 ci-dessus, gere dans compute_strategy_picks).
+        #   Place 1 : fenetre T+60s -> LIVE, cote finale entre 1 et 100
+        #             (large), chute >= 10%, un seul cheval retenu (la plus
+        #             grosse chute)
+        #   Place 2 : fenetre T-60s -> LIVE, cote finale entre 1 et 100
+        #             (large), chute >= 20%, un seul cheval retenu (la plus
+        #             grosse chute)
+        "place": {
+            "type": "live_multi",
+            "strategies": [
+                {"label": "Place 1", "start_offset_s": 60, "end_live": True,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 10},
+                {"label": "Place 2", "start_offset_s": -60, "end_live": True,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 20},
+            ],
+        },
     },
 }
 
