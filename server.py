@@ -219,8 +219,25 @@ STRATEGY_HISTORY_RETENTION_S = 6 * 60  # 6 min : couvre largement la fenetre la 
 # correspond au critere apparaissent simultanement dans strategyPlace.
 STRATEGY_CONFIG = {
     "PLAT": {
-        "gagnant": {"start_offset_s": -180, "end_offset_s": -90,  "cote_min": 6,  "cote_max": 10,
-                    "min_pct_chute": 0, "multi": True},
+        # Gagnant PLAT : 2 sous-strategies INDEPENDANTES (meme fonctionnement
+        # "type": "live_multi" que le Placé ci-dessous, gere dans
+        # compute_strategy_picks) -- fenetres classiques a fin fixe
+        # (end_offset_s), pas de end_live ici.
+        #   Gagnant 1 : fenetre T-210s -> T-180s, cote finale entre 1 et 10,
+        #               chute >= 0% (stable ou en baisse), un seul cheval
+        #               retenu (la plus grosse chute)
+        #   Gagnant 2 : fenetre T-180s -> T-90s, cote finale entre 6 et 10,
+        #               chute >= 0% (stable ou en baisse), TOUS les chevaux
+        #               qui matchent (multi=True)
+        "gagnant": {
+            "type": "live_multi",
+            "strategies": [
+                {"label": "Gagnant 1", "start_offset_s": -210, "end_offset_s": -180,
+                 "cote_min": 1, "cote_max": 10, "min_pct_chute": 0},
+                {"label": "Gagnant 2", "start_offset_s": -180, "end_offset_s": -90,
+                 "cote_min": 6, "cote_max": 10, "min_pct_chute": 0, "multi": True},
+            ],
+        },
         # Placé PLAT : 2 sous-strategies INDEPENDANTES et LIVE (cf.
         # "type": "live_multi" ci-dessous, gere dans compute_strategy_picks) --
         # contrairement au fonctionnement "classique" (fenetre figee une fois
@@ -243,7 +260,25 @@ STRATEGY_CONFIG = {
         },
     },
     "TROT": {
-        "gagnant": {"start_offset_s": -120, "end_offset_s": -60,  "cote_min": 3, "cote_max": 6},
+        # Gagnant TROT : 2 sous-strategies INDEPENDANTES (meme fonctionnement
+        # "type": "live_multi" que le Gagnant PLAT ci-dessus, gere dans
+        # compute_strategy_picks) -- fenetres classiques a fin fixe
+        # (end_offset_s), pas de end_live ici.
+        #   Gagnant 1 : fenetre T-210s -> T-180s, cote finale entre 1 et 10,
+        #               chute >= 0% (stable ou en baisse), un seul cheval
+        #               retenu (la plus grosse chute)
+        #   Gagnant 2 : fenetre T-180s -> T+30s, cote finale entre 6 et 10,
+        #               chute >= 5%, TOUS les chevaux qui matchent
+        #               (multi=True)
+        "gagnant": {
+            "type": "live_multi",
+            "strategies": [
+                {"label": "Gagnant 1", "start_offset_s": -210, "end_offset_s": -180,
+                 "cote_min": 1, "cote_max": 10, "min_pct_chute": 0},
+                {"label": "Gagnant 2", "start_offset_s": -180, "end_offset_s": 30,
+                 "cote_min": 6, "cote_max": 10, "min_pct_chute": 5, "multi": True},
+            ],
+        },
         # Placé TROT : 4 sous-strategies INDEPENDANTES (meme fonctionnement
         # "type": "live_multi" que le Placé PLAT ci-dessus, gere dans
         # compute_strategy_picks) -- chacune avec sa propre fenetre / plage
@@ -278,7 +313,20 @@ STRATEGY_CONFIG = {
         },
     },
     "HAIE": {
-        "gagnant": {"start_offset_s": -270, "end_offset_s": -150, "cote_min": 1, "cote_max": 10},
+        # Gagnant HAIE : 1 sous-strategie (meme fonctionnement "type":
+        # "live_multi" que Gagnant PLAT/TROT ci-dessus, gere dans
+        # compute_strategy_picks) -- fenetre classique a fin fixe
+        # (end_offset_s).
+        #   Gagnant 1 : fenetre T-210s -> T-180s, cote finale entre 1 et 10,
+        #               chute >= 0% (stable ou en baisse), un seul cheval
+        #               retenu (la plus grosse chute)
+        "gagnant": {
+            "type": "live_multi",
+            "strategies": [
+                {"label": "Gagnant 1", "start_offset_s": -210, "end_offset_s": -180,
+                 "cote_min": 1, "cote_max": 10, "min_pct_chute": 0},
+            ],
+        },
         # Placé HAIE : 2 sous-strategies INDEPENDANTES et LIVE (meme
         # fonctionnement "type": "live_multi" que le Placé PLAT / Trot
         # Place 1+2 ci-dessus, gere dans compute_strategy_picks).
@@ -1917,11 +1965,29 @@ class Tracker:
         if not cfg:
             return None, None
 
-        gagnant = self.strategy_picks_frozen.get("gagnant")
-        if gagnant is None:
-            gagnant = self.compute_strategy_pick(cfg["gagnant"], now)
-            if gagnant is not None:
-                self.strategy_picks_frozen["gagnant"] = gagnant
+        gagnant_cfg = cfg["gagnant"]
+        if isinstance(gagnant_cfg, dict) and gagnant_cfg.get("type") == "live_multi":
+            # Gagnant PLAT (cf. STRATEGY_CONFIG) : plusieurs sous-strategies
+            # INDEPENDANTES ("Gagnant 1", "Gagnant 2", ...), memes fenetres
+            # classiques a fin fixe (pas de end_live ici) -- pas de gel dans
+            # self.strategy_picks_frozen, comme pour le Placé live_multi
+            # ci-dessous : la stabilite est assuree par la retention
+            # glissante de l'historique (STRATEGY_HISTORY_RETENTION_S) tant
+            # que le point de debut/fin de fenetre reste disponible. Chaque
+            # sous-strategie est etiquetee avec son "label" pour l'affichage
+            # cote client.
+            gagnant = []
+            for sub_cfg in gagnant_cfg["strategies"]:
+                sub_pick = self.compute_strategy_pick(sub_cfg, now) or []
+                for p in sub_pick:
+                    p["label"] = sub_cfg.get("label")
+                gagnant.extend(sub_pick)
+        else:
+            gagnant = self.strategy_picks_frozen.get("gagnant")
+            if gagnant is None:
+                gagnant = self.compute_strategy_pick(gagnant_cfg, now)
+                if gagnant is not None:
+                    self.strategy_picks_frozen["gagnant"] = gagnant
 
         place_cfg = cfg["place"]
         if isinstance(place_cfg, dict) and place_cfg.get("type") == "live_multi":
