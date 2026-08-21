@@ -281,6 +281,19 @@
     color:var(--text);
     line-height:1.15;
   }
+  .pick-card .pick-label{
+    display:inline-block;
+    font-family:'JetBrains Mono',monospace;
+    font-size:10px;
+    font-weight:700;
+    letter-spacing:.03em;
+    color:var(--accent);
+    background:rgba(232,178,77,.14);
+    border:1px solid var(--accent);
+    border-radius:5px;
+    padding:1px 6px;
+    margin-bottom:3px;
+  }
   .pick-card .pick-detail{
     font-family:'JetBrains Mono',monospace;
     font-size:11px;
@@ -632,10 +645,15 @@ function pickCardHtml(pick){
   const coteFinStr = (pick.coteFin !== null && pick.coteFin !== undefined) ? pick.coteFin.toFixed(1) : '—';
   const coteDebutStr = (pick.coteDebut !== null && pick.coteDebut !== undefined) ? pick.coteDebut.toFixed(1) : '—';
   const pctStr = (pick.pctChute !== null && pick.pctChute !== undefined) ? `-${pick.pctChute.toFixed(1)}%` : '—';
+  // pick.label : present uniquement pour le Placé PLAT (2 sous-stratégies
+  // "Place 1" / "Place 2" indépendantes et live, cf. server.py). Absent
+  // (undefined) pour les autres sections/disciplines -> pas de badge affiché.
+  const labelHtml = pick.label ? `<div class="pick-label">${pick.label}</div>` : '';
   return `
     <div class="pick-card">
       <span class="num-badge">${pick.num}</span>
       <div class="pick-info">
+        ${labelHtml}
         <div class="pick-name">${pick.nom || `#${pick.num}`}</div>
         <div class="pick-detail">Cote ${coteDebutStr} → ${coteFinStr}</div>
       </div>
