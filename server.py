@@ -206,16 +206,76 @@ STRATEGY_HISTORY_RETENTION_S = 6 * 60  # 6 min : couvre largement la fenetre la 
 #       accepter une cote stable (0%) ou exiger un seuil plus eleve (15%).
 #   multi : si True, TOUS les chevaux qui remplissent les criteres sont
 #       retenus (liste), au lieu du seul cheval a la plus grosse chute.
+#   end_live : si True, il n'y a pas de end_offset_s fixe -- la "cote de
+#       fin" est toujours la derniere cote LIVE connue (recalculee a chaque
+#       poll, jamais gelee). Utilise par les sous-strategies "Place 1" /
+#       "Place 2" du Placé PLAT (cf. plus bas, "type": "live_multi").
+#
+# Cas particulier "place" PLAT : au lieu d'une config unique, c'est un dict
+# {"type": "live_multi", "strategies": [config1, config2, ...]} -- chaque
+# config de la liste est une sous-strategie INDEPENDANTE (avec son propre
+# "label"), evaluee en LIVE (end_live=True) a chaque poll, jamais gelee
+# (cf. compute_strategy_picks). Toutes les sous-strategies dont un cheval
+# correspond au critere apparaissent simultanement dans strategyPlace.
 STRATEGY_CONFIG = {
     "PLAT": {
         "gagnant": {"start_offset_s": -180, "end_offset_s": -90,  "cote_min": 6,  "cote_max": 10,
                     "min_pct_chute": 0, "multi": True},
-        "place":   {"start_offset_s": 30,   "end_offset_s": 120,  "cote_min": 1,  "cote_max": 100},
+        # Placé PLAT : 2 sous-strategies INDEPENDANTES et LIVE (cf.
+        # "type": "live_multi" ci-dessous, gere dans compute_strategy_picks) --
+        # contrairement au fonctionnement "classique" (fenetre figee une fois
+        # pour toutes des qu'elle se termine), ici la fin de fenetre est
+        # l'instant PRESENT (end_live=True) : la cote de fin utilisee est
+        # toujours la derniere cote LIVE connue, et le pick est recalcule a
+        # chaque poll (jamais gele) jusqu'a la fin du suivi de la course.
+        #   Place 1 : fenetre T+60s -> LIVE, cote finale entre 1 et 100 (large),
+        #             chute >= 10%, un seul cheval retenu (la plus grosse chute)
+        #   Place 2 : fenetre T-60s -> LIVE, cote finale entre 1 et 100 (large),
+        #             chute >= 20%, un seul cheval retenu (la plus grosse chute)
+        "place": {
+            "type": "live_multi",
+            "strategies": [
+                {"label": "Place 1", "start_offset_s": 60, "end_live": True,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 10},
+                {"label": "Place 2", "start_offset_s": -60, "end_live": True,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 20},
+            ],
+        },
     },
     "TROT": {
         "gagnant": {"start_offset_s": -120, "end_offset_s": -60,  "cote_min": 3, "cote_max": 6},
-        "place":   {"start_offset_s": -150, "end_offset_s": 30,   "cote_min": 1, "cote_max": 10,
-                    "min_pct_chute": 15},
+        # Placé TROT : 4 sous-strategies INDEPENDANTES (meme fonctionnement
+        # "type": "live_multi" que le Placé PLAT ci-dessus, gere dans
+        # compute_strategy_picks) -- chacune avec sa propre fenetre / plage
+        # de cote / seuil de chute. Place 1 et Place 2 sont LIVE
+        # (end_live=True, "cote de fin" = derniere cote connue, jamais
+        # gelee) ; Place 3 et Place 4 ont une fenetre classique a fin fixe
+        # (end_offset_s), comme l'ancien Placé TROT unique.
+        #   Place 1 : fenetre T+60s -> LIVE, cote finale entre 1 et 100
+        #             (large), chute >= 10%, un seul cheval retenu (la plus
+        #             grosse chute)
+        #   Place 2 : fenetre T-60s -> LIVE, cote finale entre 1 et 100
+        #             (large), chute >= 20%, un seul cheval retenu (la plus
+        #             grosse chute)
+        #   Place 3 : fenetre T-150s -> T+30s, cote finale entre 1 et 10,
+        #             chute >= 15%, un seul cheval retenu (la plus grosse
+        #             chute)
+        #   Place 4 : fenetre T-150s -> T-120s, cote finale entre 3 et 6,
+        #             chute >= 0%, un seul cheval retenu (la plus grosse
+        #             chute)
+        "place": {
+            "type": "live_multi",
+            "strategies": [
+                {"label": "Place 1", "start_offset_s": 60, "end_live": True,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 10},
+                {"label": "Place 2", "start_offset_s": -60, "end_live": True,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 20},
+                {"label": "Place 3", "start_offset_s": -150, "end_offset_s": 30,
+                 "cote_min": 1, "cote_max": 10, "min_pct_chute": 15},
+                {"label": "Place 4", "start_offset_s": -150, "end_offset_s": -120,
+                 "cote_min": 3, "cote_max": 6, "min_pct_chute": 0},
+            ],
+        },
     },
     "HAIE": {
         "gagnant": {"start_offset_s": -270, "end_offset_s": -150, "cote_min": 1, "cote_max": 10},
@@ -1770,14 +1830,24 @@ class Tracker:
         premier). Sinon (comportement historique) : renvoie une liste
         contenant AU PLUS 1 element, celui qui a la plus grosse chute.
 
+        Cas particulier cfg["end_live"] = True (cf. STRATEGY_CONFIG, Place
+        PLAT) : il n'y a pas de fin de fenetre fixe -- la "cote de fin" est
+        toujours la derniere cote LIVE connue (end_t = now), recalculee a
+        chaque appel. Dans ce cas la seule condition d'attente est d'avoir
+        atteint le DEBUT de fenetre (start_t) ; il n'y a jamais de notion de
+        "fenetre terminee" a proprement parler.
+
         Renvoie None si la fenetre n'est pas encore terminee (pas encore de
         resultat possible). Renvoie une liste (eventuellement vide, si la
         fenetre est terminee mais qu'aucun cheval ne correspond) sinon."""
         if self.depart_ts is None:
             return None
         start_t = self.depart_ts + cfg["start_offset_s"]
-        end_t = self.depart_ts + cfg["end_offset_s"]
-        if now < end_t:
+        end_live = cfg.get("end_live", False)
+        end_t = now if end_live else self.depart_ts + cfg["end_offset_s"]
+        if now < start_t:
+            return None  # debut de fenetre pas encore atteint -> pas de cote de reference possible
+        if not end_live and now < end_t:
             return None  # fenetre pas encore terminee -> pas encore de resultat possible
 
         min_pct_chute = cfg.get("min_pct_chute")
@@ -1836,11 +1906,27 @@ class Tracker:
             if gagnant is not None:
                 self.strategy_picks_frozen["gagnant"] = gagnant
 
-        place = self.strategy_picks_frozen.get("place")
-        if place is None:
-            place = self.compute_strategy_pick(cfg["place"], now)
-            if place is not None:
-                self.strategy_picks_frozen["place"] = place
+        place_cfg = cfg["place"]
+        if isinstance(place_cfg, dict) and place_cfg.get("type") == "live_multi":
+            # Placé PLAT (cf. STRATEGY_CONFIG) : plusieurs sous-strategies
+            # INDEPENDANTES ("Place 1", "Place 2", ...), chacune LIVE
+            # (end_live=True cote compute_strategy_pick) -- donc JAMAIS
+            # gelees dans self.strategy_picks_frozen, contrairement au
+            # fonctionnement "classique" ci-dessous. Chaque sous-strategie
+            # est evaluee independamment ; son pick (le cas echeant) est
+            # etiquete avec son "label" pour l'affichage cote client.
+            place = []
+            for sub_cfg in place_cfg["strategies"]:
+                sub_pick = self.compute_strategy_pick(sub_cfg, now) or []
+                for p in sub_pick:
+                    p["label"] = sub_cfg.get("label")
+                place.extend(sub_pick)
+        else:
+            place = self.strategy_picks_frozen.get("place")
+            if place is None:
+                place = self.compute_strategy_pick(place_cfg, now)
+                if place is not None:
+                    self.strategy_picks_frozen["place"] = place
 
         return gagnant, place
 
