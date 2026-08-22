@@ -191,7 +191,7 @@ def is_trot_discipline(discipline):
 #   TROT : Attele + Monte
 #   HAIE : Haie + Steeple-chase + Cross
 # ---------------------------------------------------------------------------
-STRATEGY_HISTORY_RETENTION_S = 6 * 60  # 6 min : couvre largement la fenetre la plus longue actuelle (TROT place : T-2min30 a T+30s -> 3min)
+STRATEGY_HISTORY_RETENTION_S = 6 * 60  # 6 min : couvre largement la fenetre la plus longue actuelle (TROT Gagnant 1 : T-210s a T+30s -> 4min)
 
 # Champs de chaque config de strategie :
 #   start_offset_s / end_offset_s : instants de DEBUT / FIN de fenetre, en
@@ -204,6 +204,10 @@ STRATEGY_HISTORY_RETENTION_S = 6 * 60  # 6 min : couvre largement la fenetre la 
 #       defaut (il faut une chute STRICTE, pct_chute > 0). Une valeur
 #       numerique (ex: 0) est INCLUSIVE (pct_chute >= valeur) -- utile pour
 #       accepter une cote stable (0%) ou exiger un seuil plus eleve (15%).
+#   max_pct_chute : plafond de chute (en %) INCLUSIF (pct_chute <= valeur),
+#       optionnel. None (ou absent) -> aucune limite haute. Utile pour
+#       exclure les chutes trop violentes (ex: <=10% ou <=15%) qu'on ne veut
+#       pas considerer comme le meme signal qu'une chute moderee.
 #   multi : si True, TOUS les chevaux qui remplissent les criteres sont
 #       retenus (liste), au lieu du seul cheval a la plus grosse chute.
 #   end_live : si True, il n'y a pas de end_offset_s fixe -- la "cote de
@@ -223,39 +227,38 @@ STRATEGY_CONFIG = {
         # "type": "live_multi" que le Placé ci-dessous, gere dans
         # compute_strategy_picks) -- fenetres classiques a fin fixe
         # (end_offset_s), pas de end_live ici.
-        #   Gagnant 1 : fenetre T-210s -> T-180s, cote finale entre 1 et 10,
-        #               chute >= 0% (stable ou en baisse), un seul cheval
-        #               retenu (la plus grosse chute)
-        #   Gagnant 2 : fenetre T-180s -> T-90s, cote finale entre 6 et 10,
-        #               chute >= 0% (stable ou en baisse), TOUS les chevaux
-        #               qui matchent (multi=True)
+        #   Gagnant 1 : fenetre T-180s -> T-90s, cote finale entre 6 et 10,
+        #               chute >= 0% (stable ou en baisse), pas de plafond,
+        #               TOUS les chevaux qui matchent (multi=True)
+        #   Gagnant 2 : fenetre T-120s -> T+30s, cote finale entre 1 et 100,
+        #               chute >= 5% et <= 10%, TOUS les chevaux qui
+        #               matchent (multi=True)
         "gagnant": {
             "type": "live_multi",
             "strategies": [
-                {"label": "Gagnant 1", "start_offset_s": -210, "end_offset_s": -180,
-                 "cote_min": 1, "cote_max": 10, "min_pct_chute": 0},
-                {"label": "Gagnant 2", "start_offset_s": -180, "end_offset_s": -90,
+                {"label": "Gagnant 1", "start_offset_s": -180, "end_offset_s": -90,
                  "cote_min": 6, "cote_max": 10, "min_pct_chute": 0, "multi": True},
+                {"label": "Gagnant 2", "start_offset_s": -120, "end_offset_s": 30,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 5, "max_pct_chute": 10,
+                 "multi": True},
             ],
         },
-        # Placé PLAT : 2 sous-strategies INDEPENDANTES et LIVE (cf.
-        # "type": "live_multi" ci-dessous, gere dans compute_strategy_picks) --
-        # contrairement au fonctionnement "classique" (fenetre figee une fois
-        # pour toutes des qu'elle se termine), ici la fin de fenetre est
-        # l'instant PRESENT (end_live=True) : la cote de fin utilisee est
-        # toujours la derniere cote LIVE connue, et le pick est recalcule a
-        # chaque poll (jamais gele) jusqu'a la fin du suivi de la course.
-        #   Place 1 : fenetre T+60s -> LIVE, cote finale entre 1 et 100 (large),
-        #             chute >= 10%, un seul cheval retenu (la plus grosse chute)
-        #   Place 2 : fenetre T-60s -> LIVE, cote finale entre 1 et 100 (large),
-        #             chute >= 20%, un seul cheval retenu (la plus grosse chute)
+        # Placé PLAT : 2 sous-strategies INDEPENDANTES, fenetres CLASSIQUES a
+        # fin fixe (end_offset_s, pas de end_live ici).
+        #   Place 1 : fenetre T+30s -> T+60s, cote finale entre 1 et 100,
+        #             chute >= 5%, pas de plafond, TOUS les chevaux qui
+        #             matchent (multi=True)
+        #   Place 2 : fenetre T-120s -> T+30s, cote finale entre 1 et 100,
+        #             chute >= 5% et <= 10%, TOUS les chevaux qui matchent
+        #             (multi=True)
         "place": {
             "type": "live_multi",
             "strategies": [
-                {"label": "Place 1", "start_offset_s": 60, "end_live": True,
-                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 10},
-                {"label": "Place 2", "start_offset_s": -60, "end_live": True,
-                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 20},
+                {"label": "Place 1", "start_offset_s": 30, "end_offset_s": 60,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 5, "multi": True},
+                {"label": "Place 2", "start_offset_s": -120, "end_offset_s": 30,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 5, "max_pct_chute": 10,
+                 "multi": True},
             ],
         },
     },
@@ -264,51 +267,36 @@ STRATEGY_CONFIG = {
         # "type": "live_multi" que le Gagnant PLAT ci-dessus, gere dans
         # compute_strategy_picks) -- fenetres classiques a fin fixe
         # (end_offset_s), pas de end_live ici.
-        #   Gagnant 1 : fenetre T-210s -> T-180s, cote finale entre 1 et 10,
-        #               chute >= 0% (stable ou en baisse), un seul cheval
-        #               retenu (la plus grosse chute)
-        #   Gagnant 2 : fenetre T-180s -> T+30s, cote finale entre 6 et 10,
-        #               chute >= 5%, TOUS les chevaux qui matchent
-        #               (multi=True)
+        #   Gagnant 1 : fenetre T-210s -> T+30s, cote finale entre 1 et 10,
+        #               chute >= 0% et <= 15%, un seul cheval retenu (la
+        #               plus grosse chute)
+        #   Gagnant 2 : fenetre T-120s -> T-30s, cote finale entre 1 et 100,
+        #               chute >= 0% et <= 15%, un seul cheval retenu (la
+        #               plus grosse chute)
         "gagnant": {
             "type": "live_multi",
             "strategies": [
-                {"label": "Gagnant 1", "start_offset_s": -210, "end_offset_s": -180,
-                 "cote_min": 1, "cote_max": 10, "min_pct_chute": 0},
-                {"label": "Gagnant 2", "start_offset_s": -180, "end_offset_s": 30,
-                 "cote_min": 6, "cote_max": 10, "min_pct_chute": 5, "multi": True},
+                {"label": "Gagnant 1", "start_offset_s": -210, "end_offset_s": 30,
+                 "cote_min": 1, "cote_max": 10, "min_pct_chute": 0, "max_pct_chute": 15},
+                {"label": "Gagnant 2", "start_offset_s": -120, "end_offset_s": -30,
+                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 0, "max_pct_chute": 15},
             ],
         },
-        # Placé TROT : 4 sous-strategies INDEPENDANTES (meme fonctionnement
-        # "type": "live_multi" que le Placé PLAT ci-dessus, gere dans
-        # compute_strategy_picks) -- chacune avec sa propre fenetre / plage
-        # de cote / seuil de chute. Place 1 et Place 2 sont LIVE
-        # (end_live=True, "cote de fin" = derniere cote connue, jamais
-        # gelee) ; Place 3 et Place 4 ont une fenetre classique a fin fixe
-        # (end_offset_s), comme l'ancien Placé TROT unique.
-        #   Place 1 : fenetre T+60s -> LIVE, cote finale entre 1 et 100
-        #             (large), chute >= 10%, un seul cheval retenu (la plus
-        #             grosse chute)
-        #   Place 2 : fenetre T-60s -> LIVE, cote finale entre 1 et 100
-        #             (large), chute >= 20%, un seul cheval retenu (la plus
-        #             grosse chute)
-        #   Place 3 : fenetre T-150s -> T+30s, cote finale entre 1 et 10,
-        #             chute >= 15%, un seul cheval retenu (la plus grosse
-        #             chute)
-        #   Place 4 : fenetre T-150s -> T-120s, cote finale entre 3 et 6,
-        #             chute >= 0%, un seul cheval retenu (la plus grosse
-        #             chute)
+        # Placé TROT : 2 sous-strategies INDEPENDANTES, fenetres CLASSIQUES a
+        # fin fixe (end_offset_s, pas de end_live ici).
+        #   Place 1 : fenetre T-150s -> T+30s, cote finale entre 1 et 10,
+        #             chute >= 15%, pas de plafond, un seul cheval retenu
+        #             (la plus grosse chute)
+        #   Place 2 : fenetre T-150s -> T-120s, cote finale entre 1 et 6,
+        #             chute >= 0%, pas de plafond, un seul cheval retenu
+        #             (la plus grosse chute)
         "place": {
             "type": "live_multi",
             "strategies": [
-                {"label": "Place 1", "start_offset_s": 60, "end_live": True,
-                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 10},
-                {"label": "Place 2", "start_offset_s": -60, "end_live": True,
-                 "cote_min": 1, "cote_max": 100, "min_pct_chute": 20},
-                {"label": "Place 3", "start_offset_s": -150, "end_offset_s": 30,
+                {"label": "Place 1", "start_offset_s": -150, "end_offset_s": 30,
                  "cote_min": 1, "cote_max": 10, "min_pct_chute": 15},
-                {"label": "Place 4", "start_offset_s": -150, "end_offset_s": -120,
-                 "cote_min": 3, "cote_max": 6, "min_pct_chute": 0},
+                {"label": "Place 2", "start_offset_s": -150, "end_offset_s": -120,
+                 "cote_min": 1, "cote_max": 6, "min_pct_chute": 0},
             ],
         },
     },
@@ -520,33 +508,44 @@ def proba_implicite(cote):
 
 
 def build_valuebet_csv():
-    """Lit le journal valuebet_log.jsonl et le met a plat en CSV, UNE LIGNE
-    PAR CHEVAL RETENU PAR UNE STRATEGIE (colonne "strategie" : "gagnant" ou
-    "place", cf. compute_strategy_pick / STRATEGY_CONFIG). Une course peut
-    donc produire 0, 1 ou 2 lignes (une par strategie ayant trouve un
+    """Lit le journal valuebet_log.jsonl et le met a plat en CSV EPURE, UNE
+    LIGNE PAR CHEVAL RETENU PAR UNE SOUS-STRATEGIE (cf. STRATEGY_CONFIG /
+    compute_strategy_pick). Une course peut donc produire 0 a N lignes (une
+    par sous-strategie -- ex: "Gagnant 1", "Place 2"... -- ayant trouve un
     cheval correspondant a son critere).
 
-    Colonnes "mise"/"gain"/"profit" calculees directement (mise fixe de 1
-    unite par cheval retenu ; gain = dividende PMU correspondant au type de
-    pari de la strategie -- Gagnant ou Place -- si le cheval a rapporte,
-    0 sinon) pour permettre un simple tableau croise dynamique (par
-    "strategie" et/ou "disciplineGroupe") et obtenir la rentabilite de
-    chaque strategie en fin de journee sans calcul supplementaire.
+    Colonnes volontairement reduites au strict necessaire pour juger la
+    rentabilite de chaque METHODE (sous-strategie) course par course :
+      - date + course (ex: "R1C1") : les DEUX sont necessaires pour
+        identifier une course de facon non ambigue, car le meme couple
+        reunion/course (ex: R1C1) revient chaque jour.
+      - labelStrategie : la sous-strategie precise (ex: "Gagnant 1",
+        "Place 2"), cf. STRATEGY_CONFIG -- permet d'isoler la rentabilite
+        de chaque methode independamment des autres.
+      - disciplineGroupe : PLAT / TROT / HAIE.
+      - num / nom : le cheval retenu.
+      - coteFin : cote au moment ou le critere a ete rempli.
+      - classementFinal : place d'arrivee reelle du cheval (best-effort).
+      - dividendeSimpleGagnant / dividendeSimplePlace : les DEUX dividendes
+        (Simple Gagnant et Simple Place) sont extraits systematiquement,
+        quelle que soit la sous-strategie a l'origine de la ligne, pour
+        pouvoir calculer le ROI des deux types de pari sur le meme cheval
+        sans repasser par le JSON brut.
 
-    Compatibilite : les anciennes lignes du journal (format d'avant la
-    refonte, signal "valuebet") n'ont pas de champ "cheval" et sont
-    ignorees silencieusement ici (rien a en tirer pour un calcul de
-    rentabilite par strategie)."""
+    Le fichier source .jsonl n'est lui pas modifie (reste complet, avec
+    rapportsRawJson etc., en cas de besoin d'analyse plus poussee) --
+    seul cet export CSV est allege.
+
+    Compatibilite : les anciennes lignes du journal (sans "cheval", ou sans
+    "labelStrategie" pour celles ecrites avant cet ajout) sont ignorees /
+    laissent la colonne labelStrategie vide plutot que de faire planter
+    l'export."""
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
-        "date", "reunion", "course", "label", "strategie", "discipline", "disciplineGroupe",
-        "hippodrome", "paysCode", "paysLabel", "etrangere", "nbPartants", "heureDepart",
-        "loggedAt", "num", "nom",
-        "coteDebut", "probaImpliciteDebut", "coteFin", "probaImpliciteFin",
-        "pctChute", "deltaProba", "classementFinal",
-        "dividende", "mise", "gain", "profit",
-        "rapportsType", "rapportsRawJson",
+        "date", "course", "labelStrategie", "disciplineGroupe",
+        "num", "nom", "coteFin", "classementFinal",
+        "dividendeSimpleGagnant", "dividendeSimplePlace",
     ])
     try:
         with open(VALUEBET_LOG_FILE, "r", encoding="utf-8") as f:
@@ -561,50 +560,21 @@ def build_valuebet_csv():
                 cheval = entry.get("cheval")
                 if not cheval:
                     continue  # ancienne ligne (pre-refonte, signal valuebet) : rien a exploiter ici
-                strategie = entry.get("strategie", "")
                 num = cheval.get("num")
                 rapports = entry.get("rapports")
-                rapports_raw = json.dumps(rapports, ensure_ascii=False) if rapports is not None else ""
-                logged_at = entry.get("loggedAt")
-                logged_at_str = (datetime.fromtimestamp(logged_at, tz=PARIS_TZ).isoformat()
-                                  if logged_at else "")
-                cote_debut = cheval.get("coteDebut")
-                cote_fin = cheval.get("coteFin")
-                keyword = "GAGNANT" if strategie == "gagnant" else "PLACE"
-                dividende = extract_dividende(rapports, num, keyword)
-                mise = 1
-                gain = dividende if dividende is not None else 0
-                profit = gain - mise
+                div_gagnant = extract_dividende(rapports, num, "GAGNANT")
+                div_place = extract_dividende(rapports, num, "PLACE")
                 writer.writerow([
                     entry.get("date", ""),
-                    entry.get("reunion", ""),
-                    entry.get("course", ""),
-                    entry.get("label", ""),
-                    strategie,
-                    entry.get("discipline", ""),
+                    entry.get("label", ""),  # "R1C1" (reunion+course a plat)
+                    entry.get("labelStrategie", ""),
                     entry.get("disciplineGroupe", ""),
-                    entry.get("hippodrome", ""),
-                    entry.get("paysCode", ""),
-                    entry.get("paysLabel", ""),
-                    entry.get("etrangere", ""),
-                    entry.get("nbPartants", ""),
-                    entry.get("heureDepart", ""),
-                    logged_at_str,
                     num,
                     cheval.get("nom", ""),
-                    cote_debut,
-                    proba_implicite(cote_debut),
-                    cote_fin,
-                    proba_implicite(cote_fin),
-                    cheval.get("pctChute", ""),
-                    delta_proba(cote_debut, cote_fin),
+                    cheval.get("coteFin", ""),
                     cheval.get("classementFinal", ""),
-                    dividende if dividende is not None else "",
-                    mise,
-                    gain,
-                    profit,
-                    entry.get("rapportsType", ""),
-                    rapports_raw,
+                    div_gagnant if div_gagnant is not None else "",
+                    div_place if div_place is not None else "",
                 ])
     except FileNotFoundError:
         pass  # aucun pick de strategie enregistre pour l'instant -> CSV avec juste l'entete
@@ -1551,6 +1521,7 @@ class Tracker:
                         "course": course,
                         "label": label,
                         "strategie": strategie,       # "gagnant" ou "place"
+                        "labelStrategie": pick.get("label"),  # sous-strategie precise, ex: "Gagnant 1" / "Place 2" (cf. STRATEGY_CONFIG) -- ajoute pour le CSV epure
                         "hippodrome": hippodrome,
                         "paysCode": pays_code,
                         "paysLabel": pays_label,
@@ -1916,6 +1887,7 @@ class Tracker:
             return None  # fenetre pas encore terminee -> pas encore de resultat possible
 
         min_pct_chute = cfg.get("min_pct_chute")
+        max_pct_chute = cfg.get("max_pct_chute")
         multi = cfg.get("multi", False)
 
         matches = []
@@ -1933,6 +1905,8 @@ class Tracker:
             else:
                 if pct_chute < min_pct_chute:
                     continue  # seuil explicite (INCLUSIF, ex: >=0 ou >=15)
+            if max_pct_chute is not None and pct_chute > max_pct_chute:
+                continue  # plafond explicite (INCLUSIF, ex: <=10 ou <=15) -- None = aucune limite
             matches.append({
                 "num": num,
                 "nom": self.horse_names.get(num, f"#{num}"),
